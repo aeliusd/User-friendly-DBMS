@@ -1,7 +1,7 @@
 ﻿using Microsoft.AspNetCore.Mvc;
 using Microsoft.Data.SqlClient;
 using System.Collections.Generic;
-
+using System.Data;
 namespace mini_access_api.Controllers
 {
     public class FileUploadRequest
@@ -9,12 +9,84 @@ namespace mini_access_api.Controllers
         public IFormFile File { get; set; }
         public string DatabaseName { get; set; }
     }
+    public class CellUpdateRequest
+    {
+        public string TableName { get; set; }
+        public string ColumnName { get; set; }
+        public string PrimaryKeyName { get; set; }
+        public string PrimaryKeyValue { get; set; }
+        public string NewValue { get; set; }
+    }
+
 
     [Route("api/[controller]")]
     [ApiController]
     public class TablesController : ControllerBase
     {
+        private bool IsValidIdentifier(string name)
+        {
+            if (string.IsNullOrEmpty(name)) return false;
+            return System.Text.RegularExpressions.Regex.IsMatch(name, @"^[a-zA-Z0-9_]+$");
+        }
         private readonly string _connectionstring = "Server=.\\SQLEXPRESS;Database=Northwind;Trusted_Connection=True;TrustServerCertificate=True;";
+        [HttpPut("update-cell")]
+        public IActionResult UpdateCell([FromBody] CellUpdateRequest request)
+        {
+            if (!IsValidIdentifier(request.TableName) || !IsValidIdentifier(request.ColumnName))
+            {
+                return BadRequest(new { error = "Invalid table or column name." });
+            }
+            // Enforce Rule: Never allow updating the primary key column via inline editing
+            if (request.ColumnName.ToLower() == "id" || request.ColumnName.EndsWith("id", System.StringComparison.OrdinalIgnoreCase))
+            {
+                return BadRequest(new { error = "Primary key columns cannot be modified." });
+            }
+
+            // Dynamically construct the query safely using parameterized values for the data
+            string query = $@"
+                UPDATE [{request.TableName}] 
+                SET [{request.ColumnName}] = @Value 
+                WHERE [{request.PrimaryKeyName}] = @Id";
+
+            using (SqlConnection conn = new SqlConnection(_connectionstring))
+            {
+                using (SqlCommand cmd = new SqlCommand(query, conn))
+                {
+                    cmd.Parameters.AddWithValue("@Value", (object)request.NewValue ?? DBNull.Value);
+                    cmd.Parameters.AddWithValue("@Id", request.PrimaryKeyValue);
+
+                    try
+                    {
+                        conn.Open();
+                        int rowsAffected = cmd.ExecuteNonQuery();
+
+                        if (rowsAffected == 0)
+                        {
+                            return NotFound(new { error = "Record not found or no changes made." });
+                        }
+
+                        return Ok(new { message = "Cell updated successfully." });
+                    }
+                    catch (SqlException ex)
+                    {
+                        // Handle standard database restrictions and map them to human-readable errors
+                        switch (ex.Number)
+                        {
+                            case 2627: // Unique constraint / Primary Key violation
+                            case 2601:
+                                return BadRequest(new { error = "Duplicate entry. This value must be unique." });
+                            case 547:  // Foreign Key constraint violation
+                                return BadRequest(new { error = "Database restriction error: The referenced relationship does not exist." });
+                            case 245:  // Data type conversion error (e.g., sending text to an INT column)
+                            case 8114:
+                                return BadRequest(new { error = "Data type mismatch. Please enter a valid value for this column." });
+                            default:
+                                return BadRequest(new { error = $"Database error: {ex.Message}" });
+                        }
+                    }
+                }
+            }
+        }
         [HttpPost("upload")]
         public async Task<IActionResult> UploadDatabase([FromForm] FileUploadRequest request)
         {
@@ -285,6 +357,7 @@ namespace mini_access_api.Controllers
             }
             return Ok(rows);
         }
+        
     }
 }
 

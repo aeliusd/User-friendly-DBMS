@@ -66,6 +66,74 @@ async function handleCSVUpload() {
 
 
 }
+//Export to CSV function
+async function exportToCSV(exportType) {
+    if(!ActiveTableName) {
+        alert("Please select a table first!");
+        return;
+    }
+    let dataToExport = [];
+    let fileName = "";
+    if(exportType === 'filtered')
+    {
+        if(!globalTableData || globalTableData.length === 0)
+        {
+            alert("No data currently available to export");
+            return;
+        }
+        dataToExport = globalTableData;
+        fileName = `${ActiveTableName}_Filtered.csv`;
+    }
+    else if(exportType === 'full') {
+        try {
+            const response = await fetch(`${apiURL}/${ActiveTableName}`);
+            if(!response.ok) throw new Error("Failed to fetch full table");
+            dataToExport = await response.json();
+            fileName = `${ActiveTableName}_Full_Table.csv`;
+        }
+        catch(err) {
+            console.error(err);
+            alert ("Could not load the full table for export");
+            return;
+        }
+
+    }
+    if(dataToExport.length === 0) return;
+    let rawColumns = Object.keys(dataToExport[0]);
+    const exportColumns = rawColumns.filter(col => col.toLowerCase() !== 'isdeleted');
+
+    const activeData = dataToExport.filter(row => {
+        if (row['IsDeleted'] === 1 || row['IsDeleted'] === true) return false;
+        if (row['isdeleted'] === 1 || row['isdeleted'] === true) return false; 
+        return true; 
+    });
+
+    if (activeData.length === 0) {
+        alert("No active data to export!");
+        return;
+    }
+    let csvContent = exportColumns.join(",") + "\n";
+
+    activeData.forEach(row => {
+        let rowData= exportColumns.map(col=> {
+            let cell = row[col] === null ? '' : String(row[col]);
+            cell = cell.replace(/"/g, '""'); // Escape quotes
+            return `"${cell}"`;              // Wrap in quotes
+        });
+        csvContent +=rowData.join(',') + "\n";
+    });
+    const blob = new Blob([csvContent], {type: 'text/csv;charset=utf-8;'});
+    const link = document.createElement("a");
+    const url = URL.createObjectURL(blob);
+    
+    link.setAttribute("href", url);
+    link.setAttribute("download", fileName);
+    link.style.visibility = 'hidden';
+    
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+}
 
 async function loadTablesForWorkspace(dbName) {
     try {
@@ -271,7 +339,8 @@ function renderTable() {
                     
                     // Create a clean link where the sentence is the display text
                     cellData = `<a href="${url}" target="_blank" style="color: #007bff; text-decoration: none;">${sentence}</a>`;
-                }
+                }  
+                 // Safety net for actual long text (like the Notes column!)
                 else if (typeof cellData === 'string' && cellData.length > 100) {
                     // 1. Make the text safe so random < or > characters don't break the table HTML
                     let safeText = cellData.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
@@ -296,9 +365,22 @@ function renderTable() {
                     `;
                 }
             }
-            // Safety net for actual long text (like the Notes column!)
-            
-                html += `<td>${cellData}</td>`;
+            const pkColumnName = currentColumns[0];
+            const isPrimaryKey = column.toLowerCase() === 'id' ||column === pkColumnName;
+            let rawValue = row[column] !== null ? row[column].toString() : '';
+            // Escapes backslashes, JS single quotes, HTML double quotes, and newlines
+            let escapedRaw = rawValue
+                .replace(/\\/g, "\\\\")  
+                .replace(/'/g, "\\'")    
+                .replace(/"/g, "&quot;") 
+                .replace(/\n/g, "\\n")   
+                .replace(/\r/g, "");
+            if (!isPrimaryKey) {
+                    // Adds a pointer cursor and the double-click event, passing 'this' (the TD element) and the raw data
+                    html += `<td style="cursor: pointer;" ondblclick="makeCellEditable(this, '${ActiveTableName}', '${column}', '${pkColumnName}', '${row[pkColumnName]}', '${escapedRaw}')">${cellData}</td>`;
+                } else {
+                    html += `<td>${cellData}</td>`;
+                }   
             });
             html += '</tr>';
         });
@@ -370,6 +452,82 @@ function changePage(direction) {
     renderTable();
 }
 
+// Inline helper functions
+function makeCellEditable(td, tableName, columnName, pkName, pkValue, originalValue) {
+    if (td.querySelector('input')) return;
+    let inputType = 'text';
+    if (!isNaN(originalValue) && originalValue !== '') inputType = "number";
+    
+    // Create the input element
+    const input = document.createElement('input');
+    input.type = inputType;
+    input.value = originalValue;
+    input.style.width = "100%";
+    input.style.boxSizing = "border-box";
+
+    // Clear the current cell content (including links/images) and insert the input
+    td.innerHTML = '';
+    td.appendChild(input);
+    input.focus();
+
+    // Save changes on Enter key, cancel on Escape key
+    input.onkeydown = async function(e) {
+        if (e.key === 'Enter') {
+            const newValue = input.value;
+            if (newValue === originalValue) {
+                // No change made, just reload table to restore original formatting
+                renderTable(); 
+                return;
+            }
+            
+            await saveCellUpdate(tableName, columnName, pkName, pkValue, newValue, td, originalValue);
+        } else if (e.key === 'Escape') {
+             // Cancel editing, reload table to restore original formatting
+            renderTable();
+        }
+    };
+    // Revert back if user clicks outside the input box without pressing enter
+    input.onblur = function() {
+        renderTable(); 
+    };
+}
+async function saveCellUpdate(tableName, columnName, pkName, pkValue, newValue, td, originalValue) {
+    try {
+        const response = await fetch(`${apiURL}/update-cell`, {
+            method: 'PUT',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                TableName: tableName,
+                ColumnName: columnName,
+                PrimaryKeyName: pkName,
+                PrimaryKeyValue: String(pkValue),
+                NewValue: newValue
+            })
+        });
+
+        const result = await response.json();
+
+        if (response.ok) {
+            // Update the global data array so the change persists on pagination/sorting
+            const rowToUpdate = globalTableData.find(r => String(r[pkName]) === String(pkValue));
+            if (rowToUpdate) {
+                rowToUpdate[columnName] = newValue;
+            }
+            // Re-render to apply the normal HTML formatting (links, truncation, etc)
+            renderTable();
+        } else {
+            // Display database errors (like unique constraint or data type mismatch)
+            alert(result.error || "An error occurred while saving.");
+            renderTable(); 
+        }
+    } catch (err) {
+        console.error("Update error:", err);
+        alert("Failed to communicate with the server.");
+        renderTable();
+    }
+}
 async function loadWorkspacesOnBoot() {
     try {
         const response = await fetch(`${apiURL}/workspaces`);
