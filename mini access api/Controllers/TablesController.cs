@@ -17,6 +17,11 @@ namespace mini_access_api.Controllers
         public string PrimaryKeyValue { get; set; }
         public string NewValue { get; set; }
     }
+    public class DeleteRequest
+    {
+        public string PrimaryKeyName { get; set; }
+        public string PrimaryKeyValue { get; set; }
+    }
 
 
     [Route("api/[controller]")]
@@ -214,6 +219,97 @@ namespace mini_access_api.Controllers
             }
             return Ok(tables);
         }
+        [HttpDelete("{tableName}/row")]
+        public async Task<IActionResult> DeleteRow(string tableName, [FromBody] DeleteRequest request)
+        {
+            try
+            {
+                string query = $"DELETE FROM [{tableName}] WHERE [{request.PrimaryKeyName}] = @pkValue";
+
+                using (var connection = new Microsoft.Data.SqlClient.SqlConnection(_connectionstring))
+                {
+                    await connection.OpenAsync();
+                    using (var command = new Microsoft.Data.SqlClient.SqlCommand(query, connection))
+                    {
+                        command.Parameters.AddWithValue("@pkValue", request.PrimaryKeyValue);
+                        int rowsAffected = await command.ExecuteNonQueryAsync();
+                        if (rowsAffected > 0)
+                        {
+                            return Ok(new { message = "Row deleted succesfully" });
+                        }
+                        return NotFound(new { message = "Row not found" });
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                return BadRequest(new { error = ex.Message });
+            }
+        }
+        [HttpPost("{tableName}/row")]
+        public async Task<IActionResult> InsertRow(string tableName, [FromBody] Dictionary<string, System.Text.Json.JsonElement> rowData)
+        {
+            try
+            {
+                if (rowData == null || rowData.Count == 0)
+                    return BadRequest("No column data provided.");
+
+                var columns = new List<string>();
+                var parameters = new List<string>();
+                var commandParameters = new List<Microsoft.Data.SqlClient.SqlParameter>();
+
+                int paramIndex = 0;
+                foreach (var kvp in rowData) {
+                    columns.Add($"[{kvp.Key}]");
+                    string paramName = $"@param{paramIndex}";
+                    parameters.Add(paramName);
+
+                    // Handle DBNull for null values
+                    object val = DBNull.Value;
+                    if (kvp.Value.ValueKind != System.Text.Json.JsonValueKind.Null)
+                    {
+                        val = kvp.Value.ToString();
+                    }
+
+                    commandParameters.Add(new Microsoft.Data.SqlClient.SqlParameter(paramName, val));
+                    paramIndex++;
+                }
+                string query = $@"
+                            DECLARE @HasIdentity BIT = 0;
+            
+                            -- Check if this specific table has an auto-incrementing identity column
+                            IF EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID('[{tableName}]') AND is_identity = 1)
+                            BEGIN
+                                SET @HasIdentity = 1;
+                                -- Temporarily unlock the identity column
+                                SET IDENTITY_INSERT [{tableName}] ON; 
+                            END
+
+                            -- Perform the insert with our forced ID
+                            INSERT INTO [{tableName}] ({string.Join(", ", columns)}) VALUES ({string.Join(", ", parameters)});
+
+                            -- Lock it back down to keep the database safe
+                            IF @HasIdentity = 1
+                            BEGIN
+                                SET IDENTITY_INSERT [{tableName}] OFF;
+                            END
+                        "; 
+                using (var connection = new Microsoft.Data.SqlClient.SqlConnection(_connectionstring))
+                {
+                    await connection.OpenAsync();
+                    using (var command = new Microsoft.Data.SqlClient.SqlCommand(query, connection))
+                    {
+                        command.Parameters.AddRange(commandParameters.ToArray());
+                        await command.ExecuteNonQueryAsync();
+                        return Ok(new { message = "Row inserted succesfully" });
+                    }
+                }
+            }
+            catch (Exception ex) {
+                return BadRequest(new { error = ex.Message });
+            }
+        }
+        
         [HttpGet("{tableName}")]
         public IActionResult GetTableData(string tableName, [FromQuery] string search = "", [FromQuery] bool exactMatch = false, [FromQuery] string searchColumn = "ALL")
         {

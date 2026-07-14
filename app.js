@@ -10,6 +10,8 @@ let currentPage = 1;
 const rowsPerPage = 15;
 
 let currentDatabase = 'Northwind'; // Default database
+let undoStack = [];
+
 async function selectDatabase(dbName, clickedButton) {
     currentDatabase = dbName;
     
@@ -274,12 +276,16 @@ function renderTable() {
                     ${column}${arrow}
                  </th>`;
         });
+
+        html += '<th style="background-color: #f2f2f2; text-align: center;">Actions</th>';
         html += '</tr>';
 
         const totalPages = Math.ceil(globalTableData.length / rowsPerPage);
         const startIndex = (currentPage - 1) * rowsPerPage;
         const endIndex = startIndex + rowsPerPage;
         const paginatedRows = globalTableData.slice(startIndex, endIndex);
+
+        const pkColumnName = currentColumns[0];
 
         paginatedRows.forEach(row => {
             html += '<tr>';
@@ -382,6 +388,9 @@ function renderTable() {
                     html += `<td>${cellData}</td>`;
                 }   
             });
+            html += `<td style="text-align: center;">
+                <button onclick="deleteRow('${row[pkColumnName]}', '${pkColumnName}')" title="Delete Row" style="cursor:pointer; background:none; border:none; font-size:1.2rem; transition: transform 0.1s;" onmouseover="this.style.transform='scale(1.2)'" onmouseout="this.style.transform='scale(1)'">🗑️</button>
+            </td>`;
             html += '</tr>';
         });
         html += '</table>';
@@ -513,6 +522,18 @@ async function saveCellUpdate(tableName, columnName, pkName, pkValue, newValue, 
             // Update the global data array so the change persists on pagination/sorting
             const rowToUpdate = globalTableData.find(r => String(r[pkName]) === String(pkValue));
             if (rowToUpdate) {
+                const originalValue = rowToUpdate[columnName];
+
+                undoStack.push({
+                    action: "EDIT",
+                    tableName: ActiveTableName,
+                    columnName: columnName,
+                    pkName: pkName,
+                    rowId: pkValue,
+                    oldValue: originalValue,
+                    newValue: newValue
+                });
+
                 rowToUpdate[columnName] = newValue;
             }
             // Re-render to apply the normal HTML formatting (links, truncation, etc)
@@ -528,6 +549,114 @@ async function saveCellUpdate(tableName, columnName, pkName, pkValue, newValue, 
         renderTable();
     }
 }
+async function deleteRow(pkValue, pkName) {
+    const rowToDelete = globalTableData.find(r => String(r[pkName]) === String(pkValue));
+    if (!rowToDelete) return;
+    const clonedRowData = { ...rowToDelete};
+    try {
+        const response = await fetch(`${apiURL}/${ActiveTableName}/row`, {
+            method: 'DELETE',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                PrimaryKeyName: pkName,
+                PrimaryKeyValue: String(pkValue)
+            })
+        });
+
+        if (response.ok) {
+            // Push the DELETE action to the undo stack
+            undoStack.push({
+                action: "DELETE",
+                tableName: ActiveTableName,
+                rowData: clonedRowData, // We save the whole row data to insert it back later!
+                pkName: pkName,
+                rowId: pkValue
+            });
+
+            // Remove it from our local RAM
+            globalTableData = globalTableData.filter(r => String(r[pkName]) !== String(pkValue));
+            renderTable();
+        } else {
+            console.error("Failed to delete row from database.");
+        }
+    } catch (err) {
+        console.error("Error executing delete:", err);
+    }
+}
+//Command pattern undo
+async function undoLastAction() {
+    if (undoStack.length === 0) {
+        console.log("Nothing to undo!");
+        return;
+    }
+
+    const lastAction = undoStack.pop();
+    console.log("Undoing action:", lastAction);
+
+    if (lastAction.action === "EDIT") {
+        try {
+            // BULLETPROOF: Hardcoded the exact C# API url
+            const response = await fetch(`https://localhost:7162/api/tables/update-cell`, { 
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    TableName: lastAction.tableName,
+                    ColumnName: lastAction.columnName,
+                    PrimaryKeyName: lastAction.pkName,
+                    PrimaryKeyValue: String(lastAction.rowId),
+                    NewValue: lastAction.oldValue !== null ? String(lastAction.oldValue) : "" 
+                })
+            });
+
+            if (response.ok) {
+                const row = globalTableData.find(r => String(r[lastAction.pkName]) === String(lastAction.rowId));
+                if (row) {
+                    row[lastAction.columnName] = lastAction.oldValue;
+                }
+                renderTable();
+            } else {
+                console.error("Failed to undo edit. Status:", response.status);
+            }
+        } catch (err) {
+            console.error("Failed to undo edit:", err);
+        }
+    } 
+    else if (lastAction.action === "DELETE") {
+        try {
+            // BULLETPROOF: Hardcoded the exact C# API url
+            const response = await fetch(`https://localhost:7162/api/tables/${lastAction.tableName}/row`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(lastAction.rowData) 
+            });
+
+            if (response.ok) {
+                globalTableData.push(lastAction.rowData);
+                
+                const pk = lastAction.pkName;
+                globalTableData.sort((a, b) => {
+                    return isNaN(a[pk]) ? String(a[pk]).localeCompare(String(b[pk])) : Number(a[pk]) - Number(b[pk]);
+                });
+
+                renderTable();
+            } else {
+                // Read the exact error message from C#
+                const errorData = await response.json(); 
+                console.error("Failed to undo delete. Status:", response.status, "Message:", errorData);
+            }
+        } catch (err) {
+            console.error("Failed to undo delete:", err);
+        }
+    }
+}
+document.addEventListener('keydown', function(event) {
+    // Detects Ctrl + Z (or Cmd + Z on Mac)
+    if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'z') {
+        // Prevent browser's default undo if focusing a text input
+        event.preventDefault(); 
+        undoLastAction();
+    }
+});
 async function loadWorkspacesOnBoot() {
     try {
         const response = await fetch(`${apiURL}/workspaces`);
