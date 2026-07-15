@@ -11,6 +11,7 @@ const rowsPerPage = 15;
 
 let currentDatabase = 'Northwind'; // Default database
 let undoStack = [];
+let redoStack = [];
 
 async function selectDatabase(dbName, clickedButton) {
     currentDatabase = dbName;
@@ -528,7 +529,7 @@ async function saveCellUpdate(tableName, columnName, pkName, pkValue, newValue, 
             const rowToUpdate = globalTableData.find(r => String(r[pkName]) === String(pkValue));
             if (rowToUpdate) {
                 const originalValue = rowToUpdate[columnName];
-
+                redoStack = [];
                 undoStack.push({
                     action: "EDIT",
                     tableName: ActiveTableName,
@@ -570,6 +571,7 @@ async function deleteRow(pkValue, pkName) {
 
         if (response.ok) {
             // Push the DELETE action to the undo stack
+            redoStack = [];
             undoStack.push({
                 action: "DELETE",
                 tableName: ActiveTableName,
@@ -679,19 +681,25 @@ async function showAddRowModal() {
 
 async function submitNewRow() {
     const pkName = currentColumns[0];
-    const newRowData = {};
+    const backendPayload = {}; 
+    const uiMemoryRow = {};
 
     // Gather all the text the user typed into the form
     currentColumns.forEach(col => {
         if (col !== pkName) {
             const inputEl = document.getElementById(`input_${col}`);
             if (inputEl) {
+                let val = "";
                 // If it's a checkbox, grab True/False. Otherwise, grab the text.
                 if (inputEl.type === "checkbox") {
-                    newRowData[col] = inputEl.checked ? "1" : "0";
+                    val = inputEl.checked ? "1" : "0";
                 } else {
-                    newRowData[col] = inputEl.value.trim();
+                    val = inputEl.value.trim();
                 }
+                uiMemoryRow[col] = val;
+                if (val !== "") {
+                    backendPayload[col] = val;
+                } 
             }
         }
     });
@@ -700,32 +708,33 @@ async function submitNewRow() {
         const response = await fetch(`${apiURL}/${ActiveTableName}/add-new-row?pkName=${pkName}`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(newRowData)
+            body: JSON.stringify(backendPayload) 
         });
 
         if (response.ok) {
             const data = await response.json();
-            const newId = data.newId;
+            
+            // Add the new ID to our Full UI object
+            uiMemoryRow[pkName] = data.newId;
 
-            // Add the SQL ID to our data and update the screen
-            const completeRow = { ...newRowData };
-            completeRow[pkName] = newId;
-
-            globalTableData.push(completeRow);
-            renderTable();
-
-            // Push to the Undo Stack!
+            // Push the Full object into the browser's memory
+            globalTableData.push(uiMemoryRow);
+            
+            // Push to the Undo Stack (so Redo knows all the column names)
+            redoStack = [];
             undoStack.push({
                 action: "CREATE",
                 tableName: ActiveTableName,
                 pkName: pkName,
-                rowId: newId
+                rowId: data.newId,
+                rowData: uiMemoryRow 
             });
 
-            // Destroy the popup
+            // Draw the table and destroy the popup
+            renderTable(); 
             document.getElementById('addRowOverlay').remove();
+            
         } else {
-            // If the user forgot a NOT NULL column, show the exact SQL error in red text!
             const errorData = await response.json(); 
             document.getElementById('formErrors').innerText = `Database Error: ${errorData.error}`;
         }
@@ -748,7 +757,7 @@ async function undoLastAction() {
     if (lastAction.action === "EDIT") {
         try {
             // BULLETPROOF: Hardcoded the exact C# API url
-            const response = await fetch(`https://localhost:7162/api/tables/update-cell`, { 
+            const response = await fetch(`${apiURL}/update-cell`, { 
                 method: 'PUT',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
@@ -765,6 +774,7 @@ async function undoLastAction() {
                 if (row) {
                     row[lastAction.columnName] = lastAction.oldValue;
                 }
+                redoStack.push(lastAction);
                 renderTable();
             } else {
                 console.error("Failed to undo edit. Status:", response.status);
@@ -775,8 +785,7 @@ async function undoLastAction() {
     } 
     else if (lastAction.action === "DELETE") {
         try {
-            // BULLETPROOF: Hardcoded the exact C# API url
-            const response = await fetch(`https://localhost:7162/api/tables/${lastAction.tableName}/row`, {
+            const response = await fetch(`${apiURL}/${lastAction.tableName}/row`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(lastAction.rowData) 
@@ -789,7 +798,7 @@ async function undoLastAction() {
                 globalTableData.sort((a, b) => {
                     return isNaN(a[pk]) ? String(a[pk]).localeCompare(String(b[pk])) : Number(a[pk]) - Number(b[pk]);
                 });
-
+                redoStack.push(lastAction);
                 renderTable();
             } else {
                 // Read the exact error message from C#
@@ -814,6 +823,7 @@ async function undoLastAction() {
                 // Wipe it from the browser's memory and refresh the screen
                 globalTableData = globalTableData.filter(r => String(r[lastAction.pkName]) !== String(lastAction.rowId));
                 renderTable();
+                redoStack.push(lastAction);
             } else {
                 console.error("Failed to undo create. Status:", response.status);
             }
@@ -822,12 +832,94 @@ async function undoLastAction() {
         }
     }
 }
+
+//command pattern redo
+async function redoLastAction() {
+    if (redoStack.length === 0) {
+        console.log("Nothing to redo!");
+        return;
+    }
+
+    const lastAction = redoStack.pop();
+    console.log("Redoing action:", lastAction);
+
+    if (lastAction.action === "EDIT") {
+        try {
+            // REDO an edit by pushing the NEW value back to the database
+            const response = await fetch(`${apiURL}/update-cell`, { 
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    TableName: lastAction.tableName,
+                    ColumnName: lastAction.columnName,
+                    PrimaryKeyName: lastAction.pkName,
+                    PrimaryKeyValue: String(lastAction.rowId),
+                    NewValue: lastAction.newValue !== null ? String(lastAction.newValue) : "" // Use the NEW value here!
+                })
+            });
+
+            if (response.ok) {
+                const row = globalTableData.find(r => String(r[lastAction.pkName]) === String(lastAction.rowId));
+                if (row) {
+                    row[lastAction.columnName] = lastAction.newValue;
+                }
+                undoStack.push(lastAction); // Put it back in the Undo stack!
+                renderTable();
+            }
+        } catch (err) { console.error("Failed to redo edit:", err); }
+    } 
+    else if (lastAction.action === "DELETE") {
+        try {
+            // REDO a delete by deleting it again
+            const response = await fetch(`${apiURL}/${lastAction.tableName}/row`, {
+                method: 'DELETE',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    PrimaryKeyName: lastAction.pkName,
+                    PrimaryKeyValue: String(lastAction.rowId)
+                })
+            });
+
+            if (response.ok) {
+                globalTableData = globalTableData.filter(r => String(r[lastAction.pkName]) !== String(lastAction.rowId));
+                undoStack.push(lastAction); // Put it back in the Undo stack!
+                renderTable();
+            }
+        } catch (err) { console.error("Failed to redo delete:", err); }
+    }
+    else if (lastAction.action === "CREATE") {
+        try {
+            // REDO a create by inserting it back into the database.
+            const response = await fetch(`${apiURL}/${lastAction.tableName}/row`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(lastAction.rowData) 
+            });
+
+            if (response.ok) {
+                globalTableData.push(lastAction.rowData);
+                const pk = lastAction.pkName;
+                globalTableData.sort((a, b) => {
+                    return isNaN(a[pk]) ? String(a[pk]).localeCompare(String(b[pk])) : Number(a[pk]) - Number(b[pk]);
+                });
+                
+                undoStack.push(lastAction); // Put it back in the Undo stack!
+                renderTable();
+            }
+        } catch (err) { console.error("Failed to redo create:", err); }
+    }
+}
+
 document.addEventListener('keydown', function(event) {
     // Detects Ctrl + Z (or Cmd + Z on Mac)
-    if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'z') {
-        // Prevent browser's default undo if focusing a text input
-        event.preventDefault(); 
-        undoLastAction();
+   if (event.ctrlKey || event.metaKey) {
+        if (event.key.toLowerCase() === 'z') {
+            event.preventDefault(); 
+            undoLastAction();
+        } else if (event.key.toLowerCase() === 'y') {
+            event.preventDefault();
+            redoLastAction();
+        }
     }
 });
 async function loadWorkspacesOnBoot() {
