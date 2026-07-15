@@ -246,6 +246,72 @@ namespace mini_access_api.Controllers
                 return BadRequest(new { error = ex.Message });
             }
         }
+
+        [HttpPost("{tableName}/add-new-row")]
+        public async Task<IActionResult> AddNewRow(string tableName, [FromQuery] string pkName, [FromBody] Dictionary<string, System.Text.Json.JsonElement> rowData)
+        {
+            try
+            {
+                var columns = new List<string>();
+                var parameters = new List<string>();
+                var commandParameters = new List<Microsoft.Data.SqlClient.SqlParameter>();
+
+                int paramIndex = 0;
+                foreach (var kvp in rowData)
+                {
+                    // If the value is completely null, skip it
+                    if (kvp.Value.ValueKind == System.Text.Json.JsonValueKind.Null) continue;
+
+                    string stringValue = kvp.Value.ToString();
+
+                    // If the user sent an empty string, skip it! 
+                    // We do not even include this column in the SQL query.
+                    if (string.IsNullOrWhiteSpace(stringValue)) continue;
+
+                    // 3. If we get here, there is actual data to insert
+                    columns.Add($"[{kvp.Key}]");
+                    string paramName = $"@param{paramIndex}";
+                    parameters.Add(paramName);
+
+                    commandParameters.Add(new Microsoft.Data.SqlClient.SqlParameter(paramName, stringValue));
+                    paramIndex++;
+                }
+
+                string query = "";
+
+                // If every single column was blank (which happens when you just click + Add Row), 
+                // we use a special SQL command to generate a perfectly empty row using native defaults.
+                if (columns.Count == 0)
+                {
+                    query = $"INSERT INTO [{tableName}] OUTPUT INSERTED.[{pkName}] DEFAULT VALUES";
+                }
+                else
+                {
+                    query = $"INSERT INTO [{tableName}] ({string.Join(", ", columns)}) OUTPUT INSERTED.[{pkName}] VALUES ({string.Join(", ", parameters)})";
+                }
+
+                using (var connection = new Microsoft.Data.SqlClient.SqlConnection(_connectionstring))
+                {
+                    await connection.OpenAsync();
+                    using (var command = new Microsoft.Data.SqlClient.SqlCommand(query, connection))
+                    {
+                        // Only add parameters if we actually have some
+                        if (commandParameters.Count > 0)
+                        {
+                            command.Parameters.AddRange(commandParameters.ToArray());
+                        }
+
+                        var newId = await command.ExecuteScalarAsync();
+                        return Ok(new { newId = newId.ToString() });
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                return BadRequest(new { error = ex.Message });
+            }
+        }
+
         [HttpPost("{tableName}/row")]
         public async Task<IActionResult> InsertRow(string tableName, [FromBody] Dictionary<string, System.Text.Json.JsonElement> rowData)
         {
@@ -309,7 +375,47 @@ namespace mini_access_api.Controllers
                 return BadRequest(new { error = ex.Message });
             }
         }
-        
+        [HttpGet("{tableName}/schema")]
+        public async Task<IActionResult> GetTableSchema(string tableName)
+        {
+            try
+            {
+                var schema = new List<Dictionary<string, string>>();
+
+                // This queries SQL Server's internal rulebook for a specific table
+                string query = @"
+            SELECT COLUMN_NAME, DATA_TYPE, IS_NULLABLE 
+            FROM INFORMATION_SCHEMA.COLUMNS 
+            WHERE TABLE_NAME = @tableName";
+
+                using (var connection = new Microsoft.Data.SqlClient.SqlConnection(_connectionstring))
+                {
+                    await connection.OpenAsync();
+                    using (var command = new Microsoft.Data.SqlClient.SqlCommand(query, connection))
+                    {
+                        command.Parameters.AddWithValue("@tableName", tableName);
+                        using (var reader = await command.ExecuteReaderAsync())
+                        {
+                            while (await reader.ReadAsync())
+                            {
+                                schema.Add(new Dictionary<string, string>
+                        {
+                            { "ColumnName", reader["COLUMN_NAME"].ToString() },
+                            { "DataType", reader["DATA_TYPE"].ToString() },
+                            { "IsNullable", reader["IS_NULLABLE"].ToString() }
+                        });
+                            }
+                        }
+                    }
+                }
+                return Ok(schema);
+            }
+            catch (Exception ex)
+            {
+                return BadRequest(new { error = ex.Message });
+            }
+        }
+
         [HttpGet("{tableName}")]
         public IActionResult GetTableData(string tableName, [FromQuery] string search = "", [FromQuery] bool exactMatch = false, [FromQuery] string searchColumn = "ALL")
         {

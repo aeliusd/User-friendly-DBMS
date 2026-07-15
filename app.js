@@ -405,7 +405,12 @@ function renderTable() {
             </div>
             `;
         }
-       container.innerHTML = `<h2>Data for: ${ActiveTableName} <span style="font-size: 14px; color: gray; font-weight: normal;">(${globalTableData.length} total records)</span></h2>` + html;
+        container.innerHTML = `
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
+                <h2>Data for: ${ActiveTableName} <span style="font-size: 14px; color: gray; font-weight: normal;">(${globalTableData.length} total records)</span></h2>
+                <button onclick="showAddRowModal()" style="padding: 8px 15px; background-color: #28a745; color: white; border: none; border-radius: 4px; cursor: pointer; font-weight: bold;">+ Add Row</button>
+            </div>
+        ` + html;
 }
 // Sort table data based on the clicked column
 function sortTable(column) {
@@ -583,6 +588,153 @@ async function deleteRow(pkValue, pkName) {
         console.error("Error executing delete:", err);
     }
 }
+
+async function showAddRowModal() {
+    if (!currentColumns || currentColumns.length === 0) return;
+
+    const pkName = currentColumns[0];
+    let schemaData = [];
+
+    // Fetch the database rules before drawing the form
+    try {
+        const response = await fetch(`${apiURL}/${ActiveTableName}/schema`);
+        if (response.ok) {
+            schemaData = await response.json();
+        }
+    } catch (err) {
+        console.warn("Could not load schema, defaulting to text inputs.");
+    }
+
+    // Create the background and modal
+    const overlay = document.createElement('div');
+    overlay.id = 'addRowOverlay';
+    overlay.style.cssText = 'position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); display: flex; justify-content: center; align-items: center; z-index: 1000;';
+
+    const modal = document.createElement('div');
+    modal.style.cssText = 'background: white; padding: 20px; border-radius: 8px; width: 400px; max-height: 80vh; overflow-y: auto; font-family: sans-serif; box-shadow: 0 4px 15px rgba(0,0,0,0.2);';
+
+    let formHtml = `<h3 style="margin-top: 0; border-bottom: 1px solid #eee; padding-bottom: 10px;">Add New Row: ${ActiveTableName}</h3>`;
+    formHtml += `<div id="formErrors" style="color: red; margin-bottom: 10px; font-size: 14px; font-weight: bold;"></div>`;
+
+    // Dynamically generate inputs based on Schema Rules
+    currentColumns.forEach(col => {
+        if (col !== pkName) {
+            
+            // Find the rules for this specific column
+            const colSchema = schemaData.find(s => s.ColumnName === col);
+            
+            let isRequired = false;
+            let htmlInputType = "text"; 
+            let stepAttribute = ""; // Used to allow decimals in number fields
+
+            if (colSchema) {
+                // Check if it needs a red star
+                isRequired = colSchema.IsNullable === "NO";
+
+                // Translate SQL types to HTML5 input types
+                const sqlDataType = colSchema.DataType.toLowerCase();
+                
+                if (['int', 'bigint', 'smallint', 'tinyint'].includes(sqlDataType)) {
+                    htmlInputType = "number";
+                } 
+                else if (['decimal', 'numeric', 'money', 'float', 'real'].includes(sqlDataType)) {
+                    htmlInputType = "number";
+                    stepAttribute = 'step="any"'; // Allows decimals
+                }
+                else if (['date', 'datetime', 'datetime2'].includes(sqlDataType)) {
+                    htmlInputType = "datetime-local";
+                }
+                else if (sqlDataType === 'bit') {
+                    htmlInputType = "checkbox"; // True/False!
+                }
+            }
+
+            // Draw the Label (with the red star if required)
+            const requiredStar = isRequired ? `<span style="color: red; margin-left: 3px;">*</span>` : '';
+            formHtml += `<div style="margin-bottom: 15px;">
+                            <label style="display: block; font-weight: bold; margin-bottom: 5px; font-size: 14px;">${col}${requiredStar}</label>`;
+            
+            // Draw the Input box
+            if (htmlInputType === "checkbox") {
+                formHtml += `<input type="checkbox" id="input_${col}" style="transform: scale(1.5); margin-left: 5px;" />`;
+            } else {
+                formHtml += `<input type="${htmlInputType}" ${stepAttribute} id="input_${col}" placeholder="Enter ${col}..." style="width: 100%; padding: 8px; box-sizing: border-box; border: 1px solid #ccc; border-radius: 4px;" />`;
+            }
+            
+            formHtml += `</div>`;
+        }
+    });
+
+    formHtml += `
+        <div style="display: flex; justify-content: flex-end; gap: 10px; margin-top: 20px; border-top: 1px solid #eee; padding-top: 15px;">
+            <button onclick="document.getElementById('addRowOverlay').remove()" style="padding: 8px 15px; cursor: pointer; background: #f8f9fa; border: 1px solid #ccc; border-radius: 4px;">Cancel</button>
+            <button onclick="submitNewRow()" style="padding: 8px 15px; background: #28a745; color: white; border: none; border-radius: 4px; cursor: pointer; font-weight: bold;">Save Row</button>
+        </div>
+    `;
+
+    modal.innerHTML = formHtml;
+    overlay.appendChild(modal);
+    document.body.appendChild(overlay);
+}
+
+async function submitNewRow() {
+    const pkName = currentColumns[0];
+    const newRowData = {};
+
+    // Gather all the text the user typed into the form
+    currentColumns.forEach(col => {
+        if (col !== pkName) {
+            const inputEl = document.getElementById(`input_${col}`);
+            if (inputEl) {
+                // If it's a checkbox, grab True/False. Otherwise, grab the text.
+                if (inputEl.type === "checkbox") {
+                    newRowData[col] = inputEl.checked ? "1" : "0";
+                } else {
+                    newRowData[col] = inputEl.value.trim();
+                }
+            }
+        }
+    });
+
+    try {
+        const response = await fetch(`${apiURL}/${ActiveTableName}/add-new-row?pkName=${pkName}`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(newRowData)
+        });
+
+        if (response.ok) {
+            const data = await response.json();
+            const newId = data.newId;
+
+            // Add the SQL ID to our data and update the screen
+            const completeRow = { ...newRowData };
+            completeRow[pkName] = newId;
+
+            globalTableData.push(completeRow);
+            renderTable();
+
+            // Push to the Undo Stack!
+            undoStack.push({
+                action: "CREATE",
+                tableName: ActiveTableName,
+                pkName: pkName,
+                rowId: newId
+            });
+
+            // Destroy the popup
+            document.getElementById('addRowOverlay').remove();
+        } else {
+            // If the user forgot a NOT NULL column, show the exact SQL error in red text!
+            const errorData = await response.json(); 
+            document.getElementById('formErrors').innerText = `Database Error: ${errorData.error}`;
+        }
+    } catch (err) {
+        document.getElementById('formErrors').innerText = `Network Error: ${err.message}`;
+    }   
+}
+
+
 //Command pattern undo
 async function undoLastAction() {
     if (undoStack.length === 0) {
@@ -646,6 +798,27 @@ async function undoLastAction() {
             }
         } catch (err) {
             console.error("Failed to undo delete:", err);
+        }
+    } else if(lastAction.action === "CREATE") {
+        try {
+            const response = await fetch(`${apiURL}/${lastAction.tableName}/row`, {
+                method: 'DELETE',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    PrimaryKeyName: lastAction.pkName,
+                    PrimaryKeyValue: String(lastAction.rowId)
+                })
+            });
+
+            if (response.ok) {
+                // Wipe it from the browser's memory and refresh the screen
+                globalTableData = globalTableData.filter(r => String(r[lastAction.pkName]) !== String(lastAction.rowId));
+                renderTable();
+            } else {
+                console.error("Failed to undo create. Status:", response.status);
+            }
+        } catch (err) {
+            console.error("Failed to undo create:", err);
         }
     }
 }
