@@ -415,7 +415,76 @@ namespace mini_access_api.Controllers
                 return BadRequest(new { error = ex.Message });
             }
         }
+        [HttpDelete("{tableName}/column/{columnName}")]
+        public async Task<IActionResult> DropColumn(string tableName, string columnName)
+        {
+            try
+            {
+                string safeTable = tableName.Replace("]", "]]");
+                string safeCol = columnName.Replace("]", "]]");
+                string query = $"ALTER TABLE [{safeTable}] DROP COLUMN [{safeCol}]";
 
+                using (var connection = new Microsoft.Data.SqlClient.SqlConnection(_connectionstring))
+                {
+                    await connection.OpenAsync();
+                    using (var command  = new Microsoft.Data.SqlClient.SqlCommand(query, connection))
+                    {
+                        await command.ExecuteNonQueryAsync();
+                        return Ok(new { message = "Column deleted succesfully." });
+                    }
+                }
+            }
+            catch (Microsoft.Data.SqlClient.SqlException sqlEx)
+            {
+                return BadRequest(new { error = $"Database restricted this action. {sqlEx.Message}" });
+            }
+            catch (Exception ex)
+            {
+                return BadRequest(new {error =  ex.Message});
+            }
+        }
+        [HttpPost("{tableName}/column")]
+        public async Task<IActionResult> AddColumn(string tableName, [FromBody] Dictionary<string, string> payload)
+        {
+            try
+            {
+                if (!payload.ContainsKey("columnName") || !payload.ContainsKey("dataType"))
+                    return BadRequest(new { error = "Missing column name or data type." });
+                string rawColumnName = payload["columnName"].Trim();
+                string friendlyType = payload["dataType"].ToLower();
+                //sql injection guard
+                string safeTable = tableName.Replace("]", "]]");
+                string safeCol = rawColumnName.Replace("]", "]]").Replace(" ", "_");
+
+                if (string.IsNullOrWhiteSpace(safeCol))
+                    return BadRequest(new { error = "Column name cannot be empty" });
+                // Translate User-Friendly UI types to strict SQL Server types
+                string sqlType = friendlyType switch
+                {
+                    "text" => "NVARCHAR(MAX)",
+                    "number" => "INT",
+                    "decimal" => "DECIMAL(18,2)",
+                    "date" => "DATETIME",
+                    "checkbox" => "BIT",
+                    _ => "NVARCHAR(MAX)" // Fallback
+                };
+
+                // We MUST append "NULL" at the end, or SQL Server will crash if the table already has rows!
+                string query = $"ALTER TABLE [{safeTable}] ADD [{safeCol}] {sqlType} NULL";
+                using (var connection = new Microsoft.Data.SqlClient.SqlConnection(_connectionstring))
+                {
+                    await connection.OpenAsync();
+                    using (var command = new Microsoft.Data.SqlClient.SqlCommand(query, connection))
+                    {
+                        await command.ExecuteNonQueryAsync();
+                        return Ok(new { message = "Column added succesfully." });
+                    }
+                }
+            } catch(Exception ex)
+            {
+                return BadRequest(new { error = ex.Message });
+            }   
+        }
         [HttpGet("{tableName}")]
         public IActionResult GetTableData(string tableName, [FromQuery] string search = "", [FromQuery] bool exactMatch = false, [FromQuery] string searchColumn = "ALL")
         {

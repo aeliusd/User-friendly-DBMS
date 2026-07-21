@@ -267,149 +267,167 @@ function clearSearch() {
 function renderTable() {
     const container = document.getElementById('data-container');
     let html = '<table border="1" cellpadding="5" cellspacing="0"><tr>';
+    const pkColumnName = currentColumns[0];
 
-        currentColumns.forEach(column => {
-            let arrow = '';
-            if (column === currentSortColumn) {
-                arrow = sortAscending ? ' ▲' : ' ▼';
-            }
-            html += `<th style="cursor: pointer; background-color: #f2f2f2;" onclick="sortTable('${column}')">
-                    ${column}${arrow}
-                 </th>`;
-        });
-
-        html += '<th style="background-color: #f2f2f2; text-align: center;">Actions</th>';
-        html += '</tr>';
-
-        const totalPages = Math.ceil(globalTableData.length / rowsPerPage);
-        const startIndex = (currentPage - 1) * rowsPerPage;
-        const endIndex = startIndex + rowsPerPage;
-        const paginatedRows = globalTableData.slice(startIndex, endIndex);
-
-        const pkColumnName = currentColumns[0];
-
-        paginatedRows.forEach(row => {
-            html += '<tr>';
-            currentColumns.forEach(column => {
-                let cellData = row[column] !== null ? row[column] : '';
-                let cellStr = cellData.toString().trim();
-                let isBase64Image = cellStr.startsWith('/9j/') || 
-                                cellStr.startsWith('iVBORw') || 
-                                cellStr.startsWith('R0lGOD') ||
-                                cellStr.startsWith('FRwv');
-
-                if (isBase64Image) {
-                let mimeType = 'image/jpeg';
-                let finalBase64Data = cellStr; // Default
-
-                if (cellStr.startsWith('iVBORw')) mimeType = 'image/png';
-                else if (cellStr.startsWith('R0lGOD')) mimeType = 'image/gif';
-                else if (cellStr.startsWith('FRwv')) {
-                    // It's a Northwind Image! 
-                    mimeType = 'image/bmp';
-                    // Slices off the 78-byte OLE header (104 Base64 chars) to reveal the real image
-                    finalBase64Data = cellStr.substring(104); 
-                }
-
-                // Render it using the cleaned-up data!
-                cellData = `<img src="data:${mimeType};base64,${finalBase64Data}" style="max-height: 50px; border-radius: 4px;" alt="Image" />`;
-            } else if (typeof cellData === 'string' && cellData.includes('#')) {
-                let parts = cellData.split('#');
-
-                if (parts.length >= 3) {
-                    let displayText = parts[0].trim();
-                    let url = parts[1].trim();
-                    let urlLower = url.toLowerCase();
-
-                    // SAFETY CHECK: The middle part has to actually be a web address!
-                    let isRealUrl = urlLower.startsWith('http') || 
-                                    urlLower.startsWith('www') || 
-                                    urlLower.startsWith('mailto:');
-
-                    if (isRealUrl) {
-                        if (displayText === '') displayText = url;
-
-                        // Safety net: if it starts with www, force http:// so the browser doesn't get confused
-                        let finalUrl = urlLower.startsWith('www') ? 'http://' + url : url;
-
-                        cellData = `<a href="${finalUrl}" target="_blank" style="color: #007bff; text-decoration: underline;">${displayText}</a>`;
-                    }
-                }
-            } else {
-                const urlRegex = /(https?:\/\/[^\s]+)/g;
-
-                if (typeof cellData === 'string' && urlRegex.test(cellData)) {
-                    // Split the sentence from the URL
-                    const parts = cellData.split(urlRegex);
-                    const sentence = parts[0]; // The text before the URL
-                    const url = parts[1];      // The URL itself
-                    
-                    // Create a clean link where the sentence is the display text
-                    cellData = `<a href="${url}" target="_blank" style="color: #007bff; text-decoration: none;">${sentence}</a>`;
-                }  
-                 // Safety net for actual long text (like the Notes column!)
-                else if (typeof cellData === 'string' && cellData.length > 100) {
-                    // 1. Make the text safe so random < or > characters don't break the table HTML
-                    let safeText = cellData.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-                    let shortText = safeText.substring(0, 80) + '...';
-                    
-                    // 2. Create a toggleable HTML block
-                    cellData = `
-                        <div>
-                            <span style="display: inline;">
-                                ${shortText} 
-                                <a href="javascript:void(0);" 
-                                onclick="this.parentElement.style.display='none'; this.parentElement.nextElementSibling.style.display='inline';" 
-                                style="color: #007bff; text-decoration: none; font-weight: bold;">(more)</a>
-                            </span>
-                            <span style="display: none;">
-                                ${safeText} 
-                                <a href="javascript:void(0);" 
-                                onclick="this.parentElement.style.display='none'; this.parentElement.previousElementSibling.style.display='inline';" 
-                                style="color: #007bff; text-decoration: none; font-weight: bold;">(less)</a>
-                            </span>
-                        </div>
-                    `;
-                }
-            }
-            const pkColumnName = currentColumns[0];
-            const isPrimaryKey = column.toLowerCase() === 'id' ||column === pkColumnName;
-            let rawValue = row[column] !== null ? row[column].toString() : '';
-            // Escapes backslashes, JS single quotes, HTML double quotes, and newlines
-            let escapedRaw = rawValue
-                .replace(/\\/g, "\\\\")  
-                .replace(/'/g, "\\'")    
-                .replace(/"/g, "&quot;") 
-                .replace(/\n/g, "\\n")   
-                .replace(/\r/g, "");
-            if (!isPrimaryKey) {
-                    // Adds a pointer cursor and the double-click event, passing 'this' (the TD element) and the raw data
-                    html += `<td style="cursor: pointer;" ondblclick="makeCellEditable(this, '${ActiveTableName}', '${column}', '${pkColumnName}', '${row[pkColumnName]}', '${escapedRaw}')">${cellData}</td>`;
-                } else {
-                    html += `<td>${cellData}</td>`;
-                }   
-            });
-            html += `<td style="text-align: center;">
-                <button onclick="deleteRow('${row[pkColumnName]}', '${pkColumnName}')" title="Delete Row" style="cursor:pointer; background:none; border:none; font-size:1.2rem; transition: transform 0.1s;" onmouseover="this.style.transform='scale(1.2)'" onmouseout="this.style.transform='scale(1)'">🗑️</button>
-            </td>`;
-            html += '</tr>';
-        });
-        html += '</table>';
-
-        // pagination control
-        if (totalPages > 1) {
-            html += `
-            <div style="margin-top: 15px; display: flex; align-items: center; gap: 15px; font-family: sans-serif;">
-            <button onclick="changePage(-1)" ${currentPage === 1 ? 'disabled' : ''} style="padding: 5px 15px; cursor: pointer;">Previous</button>
-            <span style="font-weight: bold;">Page ${currentPage} of ${totalPages}</span>
-            <button onclick="changePage(1)" ${currentPage === totalPages ? 'disabled' : ''} style="padding: 5px 15px; cursor: pointer;">Next</button>
-            </div>
-            `;
+    currentColumns.forEach(column => {
+        let arrow = '';
+        if (column === currentSortColumn) {
+            arrow = sortAscending ? ' ▲' : ' ▼';
         }
-        container.innerHTML = `
+
+        if (column === pkColumnName) {
+            // Primary Key Header: No Delete Button
+            html += `<th style="cursor: pointer; background-color: #f2f2f2;" onclick="sortTable('${column}')">
+                        ${column}${arrow} <br><span style="font-size: 11px; font-weight: normal;">(PK)</span>
+                     </th>`;
+        } else {
+            // Normal Header: With Delete Button
+            html += `<th style="cursor: pointer; background-color: #f2f2f2;" onclick="sortTable('${column}')">
+                        <div style="display: flex; justify-content: space-between; align-items: center;">
+                            <span>${column}${arrow}</span>
+                            <button onclick="event.stopPropagation(); promptDeleteColumn('${column}')" title="Delete Column" style="color: #dc3545; background: none; border: none; cursor: pointer; font-size: 14px; font-weight: bold; margin-left: 10px;">✖</button>
+                        </div>
+                     </th>`;
+        }
+    });
+
+    html += '<th style="background-color: #f2f2f2; text-align: center;">Actions</th>';
+    html += '</tr>';
+
+    const totalPages = Math.ceil(globalTableData.length / rowsPerPage);
+    const startIndex = (currentPage - 1) * rowsPerPage;
+    const endIndex = startIndex + rowsPerPage;
+    const paginatedRows = globalTableData.slice(startIndex, endIndex);
+
+    paginatedRows.forEach(row => {
+        html += '<tr>';
+        currentColumns.forEach(column => {
+            let cellData = row[column] !== null ? row[column] : '';
+            let cellStr = cellData.toString().trim();
+            let isBase64Image = cellStr.startsWith('/9j/') || 
+                            cellStr.startsWith('iVBORw') || 
+                            cellStr.startsWith('R0lGOD') ||
+                            cellStr.startsWith('FRwv');
+
+            if (isBase64Image) {
+            let mimeType = 'image/jpeg';
+            let finalBase64Data = cellStr; // Default
+
+            if (cellStr.startsWith('iVBORw')) mimeType = 'image/png';
+            else if (cellStr.startsWith('R0lGOD')) mimeType = 'image/gif';
+            else if (cellStr.startsWith('FRwv')) {
+                // It's a Northwind Image! 
+                mimeType = 'image/bmp';
+                // Slices off the 78-byte OLE header (104 Base64 chars) to reveal the real image
+                finalBase64Data = cellStr.substring(104); 
+            }
+
+            // Render it using the cleaned-up data!
+            cellData = `<img src="data:${mimeType};base64,${finalBase64Data}" style="max-height: 50px; border-radius: 4px;" alt="Image" />`;
+        } else if (typeof cellData === 'string' && cellData.includes('#')) {
+            let parts = cellData.split('#');
+
+            if (parts.length >= 3) {
+                let displayText = parts[0].trim();
+                let url = parts[1].trim();
+                let urlLower = url.toLowerCase();
+
+                // SAFETY CHECK: The middle part has to actually be a web address!
+                let isRealUrl = urlLower.startsWith('http') || 
+                                urlLower.startsWith('www') || 
+                                urlLower.startsWith('mailto:');
+
+                if (isRealUrl) {
+                    if (displayText === '') displayText = url;
+
+                    // Safety net: if it starts with www, force http:// so the browser doesn't get confused
+                    let finalUrl = urlLower.startsWith('www') ? 'http://' + url : url;
+
+                    cellData = `<a href="${finalUrl}" target="_blank" style="color: #007bff; text-decoration: underline;">${displayText}</a>`;
+                }
+            }
+        } else {
+            const urlRegex = /(https?:\/\/[^\s]+)/g;
+
+            if (typeof cellData === 'string' && urlRegex.test(cellData)) {
+                // Split the sentence from the URL
+                const parts = cellData.split(urlRegex);
+                const sentence = parts[0]; // The text before the URL
+                const url = parts[1];      // The URL itself
+                
+                // Create a clean link where the sentence is the display text
+                cellData = `<a href="${url}" target="_blank" style="color: #007bff; text-decoration: none;">${sentence}</a>`;
+            }  
+                // Safety net for actual long text (like the Notes column!)
+            else if (typeof cellData === 'string' && cellData.length > 100) {
+                // 1. Make the text safe so random < or > characters don't break the table HTML
+                let safeText = cellData.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+                let shortText = safeText.substring(0, 80) + '...';
+                
+                // 2. Create a toggleable HTML block
+                cellData = `
+                    <div>
+                        <span style="display: inline;">
+                            ${shortText} 
+                            <a href="javascript:void(0);" 
+                            onclick="this.parentElement.style.display='none'; this.parentElement.nextElementSibling.style.display='inline';" 
+                            style="color: #007bff; text-decoration: none; font-weight: bold;">(more)</a>
+                        </span>
+                        <span style="display: none;">
+                            ${safeText} 
+                            <a href="javascript:void(0);" 
+                            onclick="this.parentElement.style.display='none'; this.parentElement.previousElementSibling.style.display='inline';" 
+                            style="color: #007bff; text-decoration: none; font-weight: bold;">(less)</a>
+                        </span>
+                    </div>
+                `;
+            }
+        }
+        const pkColumnName = currentColumns[0];
+        const isPrimaryKey = column.toLowerCase() === 'id' ||column === pkColumnName;
+        let rawValue = row[column] !== null ? row[column].toString() : '';
+        // Escapes backslashes, JS single quotes, HTML double quotes, and newlines
+        let escapedRaw = rawValue
+            .replace(/\\/g, "\\\\")  
+            .replace(/'/g, "\\'")    
+            .replace(/"/g, "&quot;") 
+            .replace(/\n/g, "\\n")   
+            .replace(/\r/g, "");
+        if (!isPrimaryKey) {
+                // Adds a pointer cursor and the double-click event, passing 'this' (the TD element) and the raw data
+                html += `<td style="cursor: pointer;" ondblclick="makeCellEditable(this, '${ActiveTableName}', '${column}', '${pkColumnName}', '${row[pkColumnName]}', '${escapedRaw}')">${cellData}</td>`;
+            } else {
+                html += `<td>${cellData}</td>`;
+            }   
+        });
+        html += `<td style="text-align: center;">
+            <button onclick="deleteRow('${row[pkColumnName]}', '${pkColumnName}')" title="Delete Row" style="cursor:pointer; background:none; border:none; font-size:1.2rem; transition: transform 0.1s;" onmouseover="this.style.transform='scale(1.2)'" onmouseout="this.style.transform='scale(1)'">🗑️</button>
+        </td>`;
+        html += '</tr>';
+    });
+    html += '</table>';
+
+    // pagination control
+    if (totalPages > 1) {
+        html += `
+        <div style="margin-top: 15px; display: flex; align-items: center; gap: 15px; font-family: sans-serif;">
+        <button onclick="changePage(-1)" ${currentPage === 1 ? 'disabled' : ''} style="padding: 5px 15px; cursor: pointer;">Previous</button>
+        <span style="font-weight: bold;">Page ${currentPage} of ${totalPages}</span>
+        <button onclick="changePage(1)" ${currentPage === totalPages ? 'disabled' : ''} style="padding: 5px 15px; cursor: pointer;">Next</button>
+        </div>
+        `;
+    }
+    container.innerHTML = `
             <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
                 <h2>Data for: ${ActiveTableName} <span style="font-size: 14px; color: gray; font-weight: normal;">(${globalTableData.length} total records)</span></h2>
-                <button onclick="showAddRowModal()" style="padding: 8px 15px; background-color: #28a745; color: white; border: none; border-radius: 4px; cursor: pointer; font-weight: bold;">+ Add Row</button>
+                <div>
+                    <button onclick="showAddColumnModal()" style="margin-right: 10px; padding: 8px 15px; background-color: #f8f9fa; color: #333; border: 1px solid #ccc; border-radius: 4px; cursor: pointer; font-weight: bold; transition: background 0.2s;" onmouseover="this.style.backgroundColor='#e2e6ea'" onmouseout="this.style.backgroundColor='#f8f9fa'">
+                        ⚙️ Add Column
+                    </button>
+                    <button onclick="showAddRowModal()" style="padding: 8px 15px; background-color: #28a745; color: white; border: none; border-radius: 4px; cursor: pointer; font-weight: bold; transition: background 0.2s;" onmouseover="this.style.backgroundColor='#218838'" onmouseout="this.style.backgroundColor='#28a745'">
+                        + Add Row
+                    </button>
+                </div>
             </div>
         ` + html;
 }
@@ -910,6 +928,136 @@ async function redoLastAction() {
     }
 }
 
+//Warning modal for deleting a column
+function promptDeleteColumn(columnName)
+{
+    const overlay = document.createElement('div');
+    overlay.id = 'deleteColOverlay';
+    overlay.style.cssText = 'position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.7); display: flex; justify-content: center; align-items: center; z-index: 1000;';
+
+    const modal = document.createElement('div');
+    modal.style.cssText = 'background: white; padding: 25px; border-radius: 8px; width: 450px; font-family: sans-serif; box-shadow: 0 4px 15px rgba(0,0,0,0.3); border-top: 5px solid #dc3545;';
+
+    modal.innerHTML = `
+        <h3 style="margin-top: 0; color: #dc3545;">Delete Column: ${columnName}</h3>
+        <p style="font-size: 14px; color: #333;">This action <b>cannot be undone</b>. This will permanently delete the column and all data stored within it.</p>
+        <p style="font-size: 14px; color: #333;">Please type <strong>${columnName}</strong> to confirm.</p>
+        
+        <input type="text" id="confirmColName" style="width: 100%; padding: 8px; box-sizing: border-box; border: 1px solid #ccc; border-radius: 4px; margin-bottom: 15px;" autocomplete="off" />
+        <div id="colDeleteErrors" style="color: red; margin-bottom: 10px; font-size: 13px; font-weight: bold; line-height: 1.4;"></div>
+        
+        <div style="display: flex; justify-content: flex-end; gap: 10px;">
+            <button onclick="document.getElementById('deleteColOverlay').remove()" style="padding: 8px 15px; cursor: pointer; background: #f8f9fa; border: 1px solid #ccc; border-radius: 4px;">Cancel</button>
+            <button onclick="executeColumnDelete('${columnName}')" style="padding: 8px 15px; background: #dc3545; color: white; border: none; border-radius: 4px; cursor: pointer; font-weight: bold;">I understand, delete this column</button>
+        </div>
+    `;
+    overlay.appendChild(modal);
+    document.body.appendChild(overlay);
+}
+// api call to delete a column
+async function executeColumnDelete(columnName) {
+    const inputEl = document.getElementById('confirmColName');
+    if (inputEl.value !== columnName) {
+        document.getElementById('colDeleteErrors').innerText = "Column name does not match.";
+        return;
+    }
+    try {
+        const response = await fetch(`${apiURL}/${ActiveTableName}/column/${columnName}`, {
+            method: 'DELETE'
+        });
+        if(response.ok) {
+            undoStack = [];
+            redoStack = [];
+
+            currentColumns = currentColumns.filter(c => c !== columnName);
+            globalTableData.forEach(row => delete row[columnName]);
+            
+            document.getElementById('deleteColOverlay').remove();
+            renderTable();
+        } else {
+            const errorData = await response.json();
+            document.getElementById('colDeleteErrors').innerText = errorData.error;
+        }
+    } catch(err) {
+        document.getElementById('colDeleteErrors').innerText = `Network Error: ${err.message}`;
+    }
+}
+// Add column modal
+function showAddColumnModal() {
+    const overlay = document.createElement('div');
+    overlay.id = 'addColOverlay';
+    overlay.style.cssText = 'position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.7); display: flex; justify-content: center; align-items: center; z-index: 1000;';
+
+    const modal = document.createElement('div');
+    modal.style.cssText = 'background: white; padding: 25px; border-radius: 8px; width: 400px; font-family: sans-serif; box-shadow: 0 4px 15px rgba(0,0,0,0.3); border-top: 5px solid #28a745;';
+
+    modal.innerHTML = `
+        <h3 style="margin-top: 0; color: #28a745;">Add New Column</h3>
+        
+        <div style="margin-bottom: 15px;">
+            <label style="display: block; margin-bottom: 5px; font-weight: bold; font-size: 14px;">Column Name:</label>
+            <input type="text" id="newColName" placeholder="e.g., DiscountCode" style="width: 100%; padding: 8px; box-sizing: border-box; border: 1px solid #ccc; border-radius: 4px;" autocomplete="off" />
+            <small style="color: gray; font-size: 11px;">Spaces will be converted to underscores.</small>
+        </div>
+
+        <div style="margin-bottom: 20px;">
+            <label style="display: block; margin-bottom: 5px; font-weight: bold; font-size: 14px;">Data Type:</label>
+            <select id="newColType" style="width: 100%; padding: 8px; box-sizing: border-box; border: 1px solid #ccc; border-radius: 4px;">
+                <option value="text">Text (Any letters or numbers)</option>
+                <option value="number">Whole Number (e.g., 100)</option>
+                <option value="decimal">Decimal / Money (e.g., 19.99)</option>
+                <option value="date">Date & Time</option>
+                <option value="checkbox">True / False (Checkbox)</option>
+            </select>
+        </div>
+        
+        <div id="colAddErrors" style="color: red; margin-bottom: 10px; font-size: 13px; font-weight: bold;"></div>
+        
+        <div style="display: flex; justify-content: flex-end; gap: 10px;">
+            <button onclick="document.getElementById('addColOverlay').remove()" style="padding: 8px 15px; cursor: pointer; background: #f8f9fa; border: 1px solid #ccc; border-radius: 4px;">Cancel</button>
+            <button onclick="submitNewColumn()" style="padding: 8px 15px; background: #28a745; color: white; border: none; border-radius: 4px; cursor: pointer; font-weight: bold;">Add Column</button>
+        </div>
+    `;
+    overlay.appendChild(modal);
+    document.body.appendChild(overlay);
+    document.getElementById('newColName').focus(); // Auto-focus the input
+}
+async function submitNewColumn(){
+    const colName = document.getElementById('newColName').value.trim();
+    const colType = document.getElementById('newColType').value;
+    const errorDiv = document.getElementById('colAddErrors');
+
+    if (!colName) {
+        errorDiv.innerText = "Please enter a column name.";
+        return;
+    }
+    try {
+        const response = await fetch(`${apiURL}/${ActiveTableName}/column`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ 
+                columnName: colName, 
+                dataType: colType 
+            })
+        });
+
+        if (response.ok) {
+            // schema changed so reset the undo/redo
+            undoStack = []; 
+            redoStack = [];
+
+            document.getElementById('addColOverlay').remove();
+            // re-fetch table data to ensure correct schema
+            loadTableData(ActiveTableName); 
+            
+        } else {
+            const errorData = await response.json();
+            errorDiv.innerText = errorData.error || "Failed to add column.";
+        }
+    } catch (err) {
+        errorDiv.innerText = `Network Error: ${err.message}`;
+    }
+}
 document.addEventListener('keydown', function(event) {
     // Detects Ctrl + Z (or Cmd + Z on Mac)
    if (event.ctrlKey || event.metaKey) {
