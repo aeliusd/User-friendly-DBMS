@@ -13,6 +13,18 @@ let currentDatabase = 'Northwind'; // Default database
 let undoStack = [];
 let redoStack = [];
 
+let hiddenColumns = [];
+function hideColumn(columnName) {
+    if (!hiddenColumns.includes(columnName)) {
+        hiddenColumns.push(columnName);
+        renderTable();
+    }
+}
+
+function showColumn(columnName) {
+    hiddenColumns = hiddenColumns.filter(col => col !== columnName);
+    renderTable();
+}
 async function selectDatabase(dbName, clickedButton) {
     currentDatabase = dbName;
     
@@ -268,24 +280,27 @@ function renderTable() {
     const container = document.getElementById('data-container');
     let html = '<table border="1" cellpadding="5" cellspacing="0"><tr>';
     const pkColumnName = currentColumns[0];
+    const visibleColumns = currentColumns.filter(col => !hiddenColumns.includes(col));
 
-    currentColumns.forEach(column => {
+    visibleColumns.forEach(column => {
         let arrow = '';
         if (column === currentSortColumn) {
             arrow = sortAscending ? ' ▲' : ' ▼';
         }
 
         if (column === pkColumnName) {
-            // Primary Key Header: No Delete Button
             html += `<th style="cursor: pointer; background-color: #f2f2f2;" onclick="sortTable('${column}')">
                         ${column}${arrow} <br><span style="font-size: 11px; font-weight: normal;">(PK)</span>
                      </th>`;
         } else {
-            // Normal Header: With Delete Button
+            // Added the subtle (hide) text link next to the Delete button
             html += `<th style="cursor: pointer; background-color: #f2f2f2;" onclick="sortTable('${column}')">
                         <div style="display: flex; justify-content: space-between; align-items: center;">
                             <span>${column}${arrow}</span>
-                            <button onclick="event.stopPropagation(); promptDeleteColumn('${column}')" title="Delete Column" style="color: #dc3545; background: none; border: none; cursor: pointer; font-size: 14px; font-weight: bold; margin-left: 10px;">✖</button>
+                            <div>
+                                <button onclick="event.stopPropagation(); hideColumn('${column}')" title="Hide Column" style="color: #6c757d; background: none; border: none; cursor: pointer; font-size: 12px; margin-left: 10px; padding: 0;">(hide)</button>
+                                <button onclick="event.stopPropagation(); promptDeleteColumn('${column}')" title="Delete Column" style="color: #dc3545; background: none; border: none; cursor: pointer; font-size: 14px; font-weight: bold; margin-left: 5px;">✖</button>
+                            </div>
                         </div>
                      </th>`;
         }
@@ -301,7 +316,8 @@ function renderTable() {
 
     paginatedRows.forEach(row => {
         html += '<tr>';
-        currentColumns.forEach(column => {
+
+        visibleColumns.forEach(column => {
             let cellData = row[column] !== null ? row[column] : '';
             let cellStr = cellData.toString().trim();
             let isBase64Image = cellStr.startsWith('/9j/') || 
@@ -400,6 +416,7 @@ function renderTable() {
                 html += `<td>${cellData}</td>`;
             }   
         });
+
         html += `<td style="text-align: center;">
             <button onclick="deleteRow('${row[pkColumnName]}', '${pkColumnName}')" title="Delete Row" style="cursor:pointer; background:none; border:none; font-size:1.2rem; transition: transform 0.1s;" onmouseover="this.style.transform='scale(1.2)'" onmouseout="this.style.transform='scale(1)'">🗑️</button>
         </td>`;
@@ -417,19 +434,41 @@ function renderTable() {
         </div>
         `;
     }
-    container.innerHTML = `
-            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
-                <h2>Data for: ${ActiveTableName} <span style="font-size: 14px; color: gray; font-weight: normal;">(${globalTableData.length} total records)</span></h2>
-                <div>
-                    <button onclick="showAddColumnModal()" style="margin-right: 10px; padding: 8px 15px; background-color: #f8f9fa; color: #333; border: 1px solid #ccc; border-radius: 4px; cursor: pointer; font-weight: bold; transition: background 0.2s;" onmouseover="this.style.backgroundColor='#e2e6ea'" onmouseout="this.style.backgroundColor='#f8f9fa'">
-                        ⚙️ Add Column
-                    </button>
-                    <button onclick="showAddRowModal()" style="padding: 8px 15px; background-color: #28a745; color: white; border: none; border-radius: 4px; cursor: pointer; font-weight: bold; transition: background 0.2s;" onmouseover="this.style.backgroundColor='#218838'" onmouseout="this.style.backgroundColor='#28a745'">
-                        + Add Row
-                    </button>
+    //hidden dropdown
+    let hiddenDropdownHtml = '';
+    if (hiddenColumns.length > 0) {
+        let hiddenItems = hiddenColumns.map(col => 
+            `<div onclick="showColumn('${col}')" style="padding: 8px 12px; cursor: pointer; border-bottom: 1px solid #eee; display: flex; justify-content: space-between; align-items: center; font-size: 13px;" onmouseover="this.style.backgroundColor='#f8f9fa'" onmouseout="this.style.backgroundColor='white'">
+                <span>${col}</span> <span style="font-size: 12px; color: #28a745; margin-left: 10px;">➕</span>
+            </div>`
+        ).join('');
+
+        hiddenDropdownHtml = `
+            <div style="position: relative; display: inline-block; margin-right: 10px;">
+                <button onclick="this.nextElementSibling.style.display = this.nextElementSibling.style.display === 'none' ? 'block' : 'none'" style="padding: 8px 15px; background-color: #6c757d; color: white; border: none; border-radius: 4px; cursor: pointer; font-weight: bold; transition: background 0.2s;" onmouseover="this.style.backgroundColor='#5a6268'" onmouseout="this.style.backgroundColor='#6c757d'">
+                    Hidden (${hiddenColumns.length}) ▼
+                </button>
+                <div style="display: none; position: absolute; right: 0; top: 100%; margin-top: 5px; background-color: white; border: 1px solid #ccc; border-radius: 4px; box-shadow: 0 4px 12px rgba(0,0,0,0.15); z-index: 1000; min-width: 150px; text-align: left;">
+                    ${hiddenItems}
                 </div>
             </div>
-        ` + html;
+        `;
+    }
+
+    container.innerHTML = `
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
+            <h2>Data for: ${ActiveTableName} <span style="font-size: 14px; color: gray; font-weight: normal;">(${globalTableData.length} total records)</span></h2>
+            <div style="display: flex; align-items: center;">
+                ${hiddenDropdownHtml}
+                <button onclick="showAddColumnModal()" style="margin-right: 10px; padding: 8px 15px; background-color: #f8f9fa; color: #333; border: 1px solid #ccc; border-radius: 4px; cursor: pointer; font-weight: bold; transition: background 0.2s;" onmouseover="this.style.backgroundColor='#e2e6ea'" onmouseout="this.style.backgroundColor='#f8f9fa'">
+                    ⚙️ Add Column
+                </button>
+                <button onclick="showAddRowModal()" style="padding: 8px 15px; background-color: #28a745; color: white; border: none; border-radius: 4px; cursor: pointer; font-weight: bold; transition: background 0.2s;" onmouseover="this.style.backgroundColor='#218838'" onmouseout="this.style.backgroundColor='#28a745'">
+                    + Add Row
+                </button>
+            </div>
+        </div>
+    ` + html;
 }
 // Sort table data based on the clicked column
 function sortTable(column) {
