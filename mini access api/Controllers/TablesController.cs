@@ -7,10 +7,12 @@ namespace mini_access_api.Controllers
     public class FileUploadRequest
     {
         public IFormFile File { get; set; }
+        public string TableName { get; set; }
         public string DatabaseName { get; set; }
     }
     public class CellUpdateRequest
     {
+        public string DatabaseName { get; set; }
         public string TableName { get; set; }
         public string ColumnName { get; set; }
         public string PrimaryKeyName { get; set; }
@@ -19,6 +21,7 @@ namespace mini_access_api.Controllers
     }
     public class DeleteRequest
     {
+        public string DatabaseName { get; set; }
         public string PrimaryKeyName { get; set; }
         public string PrimaryKeyValue { get; set; }
     }
@@ -33,7 +36,48 @@ namespace mini_access_api.Controllers
             if (string.IsNullOrEmpty(name)) return false;
             return System.Text.RegularExpressions.Regex.IsMatch(name, @"^[a-zA-Z0-9_]+$");
         }
-        private readonly string _connectionstring = "Server=.\\SQLEXPRESS;Database=Northwind;Trusted_Connection=True;TrustServerCertificate=True;";
+        private string GetConnectionString(string databaseName = "master")
+        {
+            // Safety check to prevent malicious database names
+            if (!IsValidIdentifier(databaseName))
+            {
+                throw new ArgumentException("Invalid database name.");
+            }
+            return $"Server=.\\SQLEXPRESS;Database={databaseName};Trusted_Connection=True;TrustServerCertificate=True;";
+        }
+        [HttpPost("create-database")]
+        public async Task<IActionResult> CreateDatabase([FromQuery] string dbName)
+        {
+            if(!IsValidIdentifier(dbName))
+            {
+                return BadRequest(new { error = "Invalid database name. Use only alphanumeric characters and underscores." });
+            }
+            try
+            {
+                using( var connection = new SqlConnection(GetConnectionString("master")))
+                {
+                    await connection.OpenAsync();
+                    string checkQuery = "SELECT COUNT(1) FROM sys.databases WHERE name = @dbName";
+                    using (var checkCmd = new SqlCommand(checkQuery, connection))
+                    {
+                        checkCmd.Parameters.AddWithValue("@dbName", dbName);
+                        int exists = (int)await checkCmd.ExecuteScalarAsync();
+                        if (exists > 0)
+                            return BadRequest(new { error = "A database with this name already exists." });
+                    }
+                    string query = $"CREATE DATABASE [{dbName}]";
+                    using (var command = new SqlCommand(query, connection))
+                    {
+                        await command.ExecuteNonQueryAsync();
+                    }
+                }
+                return Ok(new { message = $"Database '{dbName}' created succesfully!" });
+            }
+            catch (Exception ex)
+            {
+                return BadRequest(new { error = ex.Message });
+            }
+        }
         [HttpPut("update-cell")]
         public IActionResult UpdateCell([FromBody] CellUpdateRequest request)
         {
@@ -53,7 +97,7 @@ namespace mini_access_api.Controllers
                 SET [{request.ColumnName}] = @Value 
                 WHERE [{request.PrimaryKeyName}] = @Id";
 
-            using (SqlConnection conn = new SqlConnection(_connectionstring))
+            using (SqlConnection conn = new SqlConnection(GetConnectionString(request.DatabaseName)))
             {
                 using (SqlCommand cmd = new SqlCommand(query, conn))
                 {
@@ -114,7 +158,7 @@ namespace mini_access_api.Controllers
                                     .Select(h => new string(h.Where(char.IsLetterOrDigit).ToArray()))
                                     .Select((h, i) => string.IsNullOrEmpty(h) ? $"Column{i}" : h)
                                     .ToArray();
-            using var connection = new SqlConnection(_connectionstring);
+            using var connection = new SqlConnection(GetConnectionString(request.DatabaseName));
             await connection.OpenAsync();
 
             var createTableSql = $"CREATE TABLE [{tableName}] (Id INT IDENTITY(1,1) PRIMARY KEY, ";
@@ -156,40 +200,42 @@ namespace mini_access_api.Controllers
 
             return Ok($"Database workspace '{tableName}' successfully generated and populated!");
         }
-        [HttpGet("workspaces")]
-        public IActionResult GetWorkspaces()
+        [HttpGet("databases")]
+        public async Task<IActionResult> GetDatabases()
         {
-            List<string> workspaces = new List<string>();
-
-            // Find all tables that are NOT part of the standard Northwind schema
-            string query = @"
-        SELECT TABLE_NAME 
-        FROM INFORMATION_SCHEMA.TABLES 
-        WHERE TABLE_TYPE = 'BASE TABLE' 
-        AND TABLE_NAME NOT IN (
-            'Categories', 'CustomerCustomerDemo', 'CustomerDemographics', 'Customers', 
-            'Employees', 'EmployeeTerritories', 'Order Details', 'Orders', 
-            'Products', 'Region', 'Shippers', 'Suppliers', 'Territories'
-        ) AND TABLE_NAME NOT LIKE 'sys%'";
-
-            using (SqlConnection connection = new SqlConnection(_connectionstring))
+            var databases = new List<string>();
+            try
             {
-                connection.Open();
-                using (SqlCommand command = new SqlCommand(query, connection))
+                string query = @"
+                    SELECT name 
+                    FROM sys.databases 
+                    WHERE name NOT IN ('master', 'tempdb', 'model', 'msdb') 
+                    ORDER BY name";
+                // Connect to 'master' to read the global database list
+                using (var connection = new SqlConnection(GetConnectionString("master")))
                 {
-                    using (SqlDataReader reader = command.ExecuteReader())
+                    await connection.OpenAsync();
+                    using (var command = new SqlCommand(query, connection))
                     {
-                        while (reader.Read())
+                        using (var reader = await command.ExecuteReaderAsync())
                         {
-                            workspaces.Add(reader.GetString(0));
+                            while (await reader.ReadAsync())
+                            {
+                                databases.Add(reader.GetString(0));
+                            }
                         }
                     }
                 }
+                return Ok(databases);
             }
-            return Ok(workspaces);
+            catch (Exception ex)
+            {
+                return BadRequest(new { error = ex.Message });
+            }
         }
+        
         [HttpGet("list")]
-        public IActionResult GetTables([FromQuery] string workspace = "Northwind")
+        public IActionResult GetTables([FromQuery] string dbName, [FromQuery] string workspace = "Northwind")
         {
             string query = "";
             if (workspace == "Northwind")
@@ -203,7 +249,7 @@ namespace mini_access_api.Controllers
                 query = $"SELECT TABLE_NAME FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_NAME = '{workspace}'";
             }
             List<string> tables = new List<string>();
-            using (SqlConnection connection = new SqlConnection(_connectionstring))
+            using (SqlConnection connection = new SqlConnection(GetConnectionString(dbName)))
             {
                 connection.Open();
                 using (SqlCommand command = new SqlCommand(query, connection))
@@ -226,7 +272,7 @@ namespace mini_access_api.Controllers
             {
                 string query = $"DELETE FROM [{tableName}] WHERE [{request.PrimaryKeyName}] = @pkValue";
 
-                using (var connection = new Microsoft.Data.SqlClient.SqlConnection(_connectionstring))
+                using (var connection = new Microsoft.Data.SqlClient.SqlConnection(GetConnectionString(request.DatabaseName)))
                 {
                     await connection.OpenAsync();
                     using (var command = new Microsoft.Data.SqlClient.SqlCommand(query, connection))
@@ -248,7 +294,7 @@ namespace mini_access_api.Controllers
         }
 
         [HttpPost("{tableName}/add-new-row")]
-        public async Task<IActionResult> AddNewRow(string tableName, [FromQuery] string pkName, [FromBody] Dictionary<string, System.Text.Json.JsonElement> rowData)
+        public async Task<IActionResult> AddNewRow([FromQuery] string dbName, string tableName, [FromQuery] string pkName, [FromBody] Dictionary<string, System.Text.Json.JsonElement> rowData)
         {
             try
             {
@@ -290,7 +336,7 @@ namespace mini_access_api.Controllers
                     query = $"INSERT INTO [{tableName}] ({string.Join(", ", columns)}) OUTPUT INSERTED.[{pkName}] VALUES ({string.Join(", ", parameters)})";
                 }
 
-                using (var connection = new Microsoft.Data.SqlClient.SqlConnection(_connectionstring))
+                using (var connection = new Microsoft.Data.SqlClient.SqlConnection(GetConnectionString(dbName)))
                 {
                     await connection.OpenAsync();
                     using (var command = new Microsoft.Data.SqlClient.SqlCommand(query, connection))
@@ -313,7 +359,7 @@ namespace mini_access_api.Controllers
         }
 
         [HttpPost("{tableName}/row")]
-        public async Task<IActionResult> InsertRow(string tableName, [FromBody] Dictionary<string, System.Text.Json.JsonElement> rowData)
+        public async Task<IActionResult> InsertRow([FromQuery] string dbName, string tableName, [FromBody] Dictionary<string, System.Text.Json.JsonElement> rowData)
         {
             try
             {
@@ -360,7 +406,7 @@ namespace mini_access_api.Controllers
                                 SET IDENTITY_INSERT [{tableName}] OFF;
                             END
                         "; 
-                using (var connection = new Microsoft.Data.SqlClient.SqlConnection(_connectionstring))
+                using (var connection = new Microsoft.Data.SqlClient.SqlConnection(GetConnectionString(dbName)))
                 {
                     await connection.OpenAsync();
                     using (var command = new Microsoft.Data.SqlClient.SqlCommand(query, connection))
@@ -376,7 +422,7 @@ namespace mini_access_api.Controllers
             }
         }
         [HttpGet("{tableName}/schema")]
-        public async Task<IActionResult> GetTableSchema(string tableName)
+        public async Task<IActionResult> GetTableSchema([FromQuery] string dbName, string tableName)
         {
             try
             {
@@ -388,7 +434,7 @@ namespace mini_access_api.Controllers
             FROM INFORMATION_SCHEMA.COLUMNS 
             WHERE TABLE_NAME = @tableName";
 
-                using (var connection = new Microsoft.Data.SqlClient.SqlConnection(_connectionstring))
+                using (var connection = new Microsoft.Data.SqlClient.SqlConnection(GetConnectionString(dbName)))
                 {
                     await connection.OpenAsync();
                     using (var command = new Microsoft.Data.SqlClient.SqlCommand(query, connection))
@@ -416,7 +462,7 @@ namespace mini_access_api.Controllers
             }
         }
         [HttpDelete("{tableName}/column/{columnName}")]
-        public async Task<IActionResult> DropColumn(string tableName, string columnName)
+        public async Task<IActionResult> DropColumn([FromQuery] string dbName, string tableName, string columnName)
         {
             try
             {
@@ -424,7 +470,7 @@ namespace mini_access_api.Controllers
                 string safeCol = columnName.Replace("]", "]]");
                 string query = $"ALTER TABLE [{safeTable}] DROP COLUMN [{safeCol}]";
 
-                using (var connection = new Microsoft.Data.SqlClient.SqlConnection(_connectionstring))
+                using (var connection = new Microsoft.Data.SqlClient.SqlConnection(GetConnectionString(dbName)))
                 {
                     await connection.OpenAsync();
                     using (var command  = new Microsoft.Data.SqlClient.SqlCommand(query, connection))
@@ -444,7 +490,7 @@ namespace mini_access_api.Controllers
             }
         }
         [HttpPost("{tableName}/column")]
-        public async Task<IActionResult> AddColumn(string tableName, [FromBody] Dictionary<string, string> payload)
+        public async Task<IActionResult> AddColumn([FromQuery] string dbName, string tableName, [FromBody] Dictionary<string, string> payload)
         {
             try
             {
@@ -471,7 +517,7 @@ namespace mini_access_api.Controllers
 
                 // We MUST append "NULL" at the end, or SQL Server will crash if the table already has rows!
                 string query = $"ALTER TABLE [{safeTable}] ADD [{safeCol}] {sqlType} NULL";
-                using (var connection = new Microsoft.Data.SqlClient.SqlConnection(_connectionstring))
+                using (var connection = new Microsoft.Data.SqlClient.SqlConnection(GetConnectionString(dbName)))
                 {
                     await connection.OpenAsync();
                     using (var command = new Microsoft.Data.SqlClient.SqlCommand(query, connection))
@@ -486,11 +532,11 @@ namespace mini_access_api.Controllers
             }   
         }
         [HttpGet("{tableName}")]
-        public IActionResult GetTableData(string tableName, [FromQuery] string search = "", [FromQuery] bool exactMatch = false, [FromQuery] string searchColumn = "ALL")
+        public IActionResult GetTableData(string tableName, [FromQuery] string dbName, [FromQuery] string search = "", [FromQuery] bool exactMatch = false, [FromQuery] string searchColumn = "ALL")
         {
             var rows = new List<Dictionary<string, object>>();
 
-            using (SqlConnection connection = new SqlConnection(_connectionstring))
+            using (SqlConnection connection = new SqlConnection(GetConnectionString(dbName)))
             {
                 connection.Open();
 
