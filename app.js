@@ -39,18 +39,28 @@ async function selectDatabase(dbName, clickedButton) {
 }
 
 async function handleCSVUpload() {
+    if (!currentDatabase) {
+        alert("Please select a database from the sidebar first.");
+        return;
+    }
+
     const fileInput = document.getElementById('csvFile');
     if (fileInput.files.length === 0) {
         alert('Please select a CSV file to import first.');
         return;
     }
-    const file = fileInput.files[0];
+    const tableName = prompt("What should we name this new table?");
+    if (!tableName) {
+        fileInput.value = ""; // clear the input if they cancel
+        return; 
+    }
 
-    const dbName = file.name.replace(".csv", "").replace(/[^a-zA-Z0-9]/g, "_");
-    
+    const file = fileInput.files[0];
     const formData = new FormData();
     formData.append('file', file);
-    formData.append('DatabaseName', dbName);
+    formData.append('DatabaseName', currentDatabase); 
+    formData.append('TableName', tableName);
+
     try {
         const response = await fetch(`${apiURL}/upload`, {
             method: 'POST',
@@ -58,18 +68,10 @@ async function handleCSVUpload() {
         });
         
         if (response.ok) {
-            alert(`Database '${dbName}' imported successfully!`);
-
-            const dbList = document.getElementById('database-list');
-            const newBtn = document.createElement('button');
-            newBtn.className = 'db-btn';
-            newBtn.innerText = dbName;
-            newBtn.onclick = () => selectDatabase(dbName);
-            dbList.appendChild(newBtn);
-
+            alert(`Table '${tableName}' imported successfully!`);
             fileInput.value = "";
-        }
-        else {
+            loadTablesForWorkspace(currentDatabase); // Refresh the dropdown
+        } else {
             const errorText = await response.text();
             alert(`Upload failed:  ${errorText}`);
         }
@@ -150,9 +152,48 @@ async function exportToCSV(exportType) {
     document.body.removeChild(link);
 }
 
+async function promptCreateDatabase() {
+    const dbName = prompt("Enter new database name (alphanumeric and underscores only):");
+    if (!dbName) return;
+    
+    try {
+        const response = await fetch(`${apiURL}/create-database?dbName=${dbName}`, { method: 'POST' });
+        if (response.ok) {
+            alert(`Database '${dbName}' created successfully!`);
+            loadWorkspacesOnBoot(); // Refresh the sidebar to show the new DB
+        } else {
+            const err = await response.json();
+            alert(err.error);
+        }
+    } catch (e) {
+        console.error("Network error:", e);
+    }
+}
+async function promptCreateEmptyTable() {
+    if (!currentDatabase) {
+        alert("Please select a database from the sidebar first!");
+        return;
+    }
+    const tableName = prompt("Enter new table name (alphanumeric and underscores only):");
+    if (!tableName) return;
+    
+    try {
+        const response = await fetch(`${apiURL}/create-table?dbName=${currentDatabase}&tableName=${tableName}`, { method: 'POST' });
+        if (response.ok) {
+            alert(`Table '${tableName}' created successfully!`);
+            loadTablesForWorkspace(currentDatabase); // Refresh the dropdown to show the new table
+        } else {
+            const err = await response.json();
+            alert(err.error);
+        }
+    } catch (e) {
+        console.error("Network error:", e);
+    }
+}
+
 async function loadTablesForWorkspace(dbName) {
     try {
-        const response = await fetch(`${apiURL}/list?workspace=${dbName}`);
+        const response = await fetch(`${apiURL}/list?dbName=${dbName}`);
         if (!response.ok) throw new Error("Failed to fetch workspace tables.");
         
         const tables = await response.json();
@@ -201,10 +242,10 @@ async function loadTableData(tableName, searchQuery = '', isExactMatch = false, 
 
     container.innerHTML = `Loading data for table ${tableName}...`;
     try {
-        let fetchUrl = `${apiURL}/${tableName}`;
-
+        let fetchUrl = `${apiURL}/${tableName}?dbName=${currentDatabase}`;
         if (searchQuery !== '') {
-            fetchUrl += `?search=${encodeURIComponent(searchQuery)}&exactMatch=${isExactMatch}&searchColumn=${encodeURIComponent(searchColumn)}`;
+            
+            fetchUrl += `&search=${encodeURIComponent(searchQuery)}&exactMatch=${isExactMatch}&searchColumn=${encodeURIComponent(searchColumn)}`;
         }
 
         const response = await fetch(fetchUrl);
@@ -217,7 +258,21 @@ async function loadTableData(tableName, searchQuery = '', isExactMatch = false, 
         controlPanel.style.display = 'block';
 
         if(rows.length === 0) {
-            container.innerHTML = `<p>No data found for your query in: ${tableName}</p>`;
+            try {
+                const schemaResponse = await fetch(`${apiURL}/${tableName}/schema?dbName=${currentDatabase}`);
+                if (schemaResponse.ok) {
+                    const schema = await schemaResponse.json();
+                    currentColumns = schema.map(col => col.ColumnName);
+                } else {
+                    currentColumns = ['Id']; // Fallback emergency column
+                }
+            } catch (schemaErr) {
+                currentColumns = ['Id'];
+            }
+            
+            globalTableData = []; 
+            populateDropdown();
+            renderTable(); // This draws the headers and your "Add Column" buttons!
             return;
         }
 
@@ -571,6 +626,7 @@ async function saveCellUpdate(tableName, columnName, pkName, pkValue, newValue, 
                 'Content-Type': 'application/json'
             },
             body: JSON.stringify({
+                DatabaseName: currentDatabase,
                 TableName: tableName,
                 ColumnName: columnName,
                 PrimaryKeyName: pkName,
@@ -621,6 +677,7 @@ async function deleteRow(pkValue, pkName) {
             method: 'DELETE',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
+                DatabaseName: currentDatabase,
                 PrimaryKeyName: pkName,
                 PrimaryKeyValue: String(pkValue)
             })
@@ -656,7 +713,7 @@ async function showAddRowModal() {
 
     // Fetch the database rules before drawing the form
     try {
-        const response = await fetch(`${apiURL}/${ActiveTableName}/schema`);
+        const response = await fetch(`${apiURL}/${ActiveTableName}/schema?dbName=${currentDatabase}`);
         if (response.ok) {
             schemaData = await response.json();
         }
@@ -762,7 +819,7 @@ async function submitNewRow() {
     });
 
     try {
-        const response = await fetch(`${apiURL}/${ActiveTableName}/add-new-row?pkName=${pkName}`, {
+        const response = await fetch(`${apiURL}/${ActiveTableName}/add-new-row?pkName=${pkName}&dbName=${currentDatabase}`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(backendPayload) 
@@ -818,6 +875,7 @@ async function undoLastAction() {
                 method: 'PUT',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
+                    DatabaseName: currentDatabase,
                     TableName: lastAction.tableName,
                     ColumnName: lastAction.columnName,
                     PrimaryKeyName: lastAction.pkName,
@@ -842,7 +900,7 @@ async function undoLastAction() {
     } 
     else if (lastAction.action === "DELETE") {
         try {
-            const response = await fetch(`${apiURL}/${lastAction.tableName}/row`, {
+            const response = await fetch(`${apiURL}/${lastAction.tableName}/row?dbName=${currentDatabase}`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(lastAction.rowData) 
@@ -871,6 +929,7 @@ async function undoLastAction() {
                 method: 'DELETE',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
+                    DatabaseName: currentDatabase,
                     PrimaryKeyName: lastAction.pkName,
                     PrimaryKeyValue: String(lastAction.rowId)
                 })
@@ -907,6 +966,7 @@ async function redoLastAction() {
                 method: 'PUT',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
+                    DatabaseName: currentDatabase,
                     TableName: lastAction.tableName,
                     ColumnName: lastAction.columnName,
                     PrimaryKeyName: lastAction.pkName,
@@ -932,6 +992,7 @@ async function redoLastAction() {
                 method: 'DELETE',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
+                    DatabaseName: currentDatabase,
                     PrimaryKeyName: lastAction.pkName,
                     PrimaryKeyValue: String(lastAction.rowId)
                 })
@@ -947,7 +1008,7 @@ async function redoLastAction() {
     else if (lastAction.action === "CREATE") {
         try {
             // REDO a create by inserting it back into the database.
-            const response = await fetch(`${apiURL}/${lastAction.tableName}/row`, {
+            const response = await fetch(`${apiURL}/${lastAction.tableName}/row?dbName=${currentDatabase}`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(lastAction.rowData) 
@@ -1001,7 +1062,7 @@ async function executeColumnDelete(columnName) {
         return;
     }
     try {
-        const response = await fetch(`${apiURL}/${ActiveTableName}/column/${columnName}`, {
+        const response = await fetch(`${apiURL}/${ActiveTableName}/column/${columnName}?dbName=${currentDatabase}`, {
             method: 'DELETE'
         });
         if(response.ok) {
@@ -1071,7 +1132,7 @@ async function submitNewColumn(){
         return;
     }
     try {
-        const response = await fetch(`${apiURL}/${ActiveTableName}/column`, {
+        const response = await fetch(`${apiURL}/${ActiveTableName}/column?dbName=${currentDatabase}`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ 
@@ -1111,14 +1172,14 @@ document.addEventListener('keydown', function(event) {
 });
 async function loadWorkspacesOnBoot() {
     try {
-        const response = await fetch(`${apiURL}/workspaces`);
-        if (!response.ok) throw new Error("Failed to load custom workspaces.");
+        const response = await fetch(`${apiURL}/databases`);
+        if (!response.ok) throw new Error("Failed to load databases.");
         
-        const workspaces = await response.json();
+        const databases = await response.json();
         const dbList = document.getElementById('database-list');
-        
+        dbList.innerHTML = '';
         // Loop through the custom DBs and inject their buttons
-        workspaces.forEach(dbName => {
+        databases.forEach(dbName => {
             const newBtn = document.createElement('button');
             newBtn.className = 'db-btn';
             newBtn.innerText = dbName;

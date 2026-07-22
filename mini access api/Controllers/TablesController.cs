@@ -78,6 +78,34 @@ namespace mini_access_api.Controllers
                 return BadRequest(new { error = ex.Message });
             }
         }
+        [HttpPost("create-table")]
+        public async Task<IActionResult> CreateEmptyTable([FromQuery] string dbName, [FromQuery] string tableName)
+        {
+            if (!IsValidIdentifier(dbName) || !IsValidIdentifier(tableName))
+            {
+                return BadRequest(new { error = "Invalid database or table name." });
+            }
+            try
+            {
+                // Creates the table with your brilliant default architecture
+                string query = $"CREATE TABLE [{tableName}] (Id INT IDENTITY(1,1) PRIMARY KEY)";
+
+                using (var connection = new SqlConnection(GetConnectionString(dbName)))
+                {
+                    await connection.OpenAsync();
+                    using (var command = new SqlCommand(query, connection))
+                    {
+                        await command.ExecuteNonQueryAsync();
+                    }
+                }
+                return Ok(new { message = $"Table '{tableName}' created successfully!" });
+            }
+            catch (Exception ex)
+            {
+                return BadRequest(new { error = ex.Message });
+            }
+        }
+
         [HttpPut("update-cell")]
         public IActionResult UpdateCell([FromBody] CellUpdateRequest request)
         {
@@ -140,65 +168,107 @@ namespace mini_access_api.Controllers
         public async Task<IActionResult> UploadDatabase([FromForm] FileUploadRequest request)
         {
             var file = request.File;
-            var databaseName = request.DatabaseName;
-            if (file == null || file.Length == 0)
-            {
-                return BadRequest("No file uploaded");
-            }
-            string tableName = new string(databaseName.Where(c => char.IsLetterOrDigit(c) || c == '_').ToArray());
-            if (string.IsNullOrEmpty(tableName))
-            {
-                tableName = "ImportedData_" + Guid.NewGuid().ToString().Substring(0,5);
-            }
+            var dbName = request.DatabaseName;
+            var tableName = request.TableName;
+
+            if (file == null || file.Length == 0) return BadRequest("No file uploaded");
+            if (!IsValidIdentifier(dbName) || !IsValidIdentifier(tableName)) return BadRequest("Invalid database or table name.");
+
             using var stream = new StreamReader(file.OpenReadStream());
             var headerLine = await stream.ReadLineAsync();
-            if (string.IsNullOrWhiteSpace(headerLine))
-                return BadRequest("CSV file is empty.");
+
+            if (string.IsNullOrWhiteSpace(headerLine)) return BadRequest("CSV file is empty.");
+
             var headers = headerLine.Split(",")
                                     .Select(h => new string(h.Where(char.IsLetterOrDigit).ToArray()))
                                     .Select((h, i) => string.IsNullOrEmpty(h) ? $"Column{i}" : h)
                                     .ToArray();
-            using var connection = new SqlConnection(GetConnectionString(request.DatabaseName));
+
+            // 1. Check if the incoming CSV already has an Id column
+            bool hasIdColumn = headers.Any(h => h.Equals("Id", StringComparison.OrdinalIgnoreCase));
+
+            using var connection = new SqlConnection(GetConnectionString(dbName));
             await connection.OpenAsync();
 
-            var createTableSql = $"CREATE TABLE [{tableName}] (Id INT IDENTITY(1,1) PRIMARY KEY, ";
-            createTableSql += string.Join(", ", headers.Select(h => $"[{h}] NVARCHAR(MAX)")) + ")";
+            // 2. Build the CREATE TABLE schema dynamically
+            var columnDefs = new List<string>();
+
+            // If there is NO id column in the CSV, we inject our own to ensure the frontend works
+            if (!hasIdColumn)
+            {
+                columnDefs.Add("[Id] INT IDENTITY(1,1) PRIMARY KEY");
+            }
+
+            foreach (var header in headers)
+            {
+                if (header.Equals("Id", StringComparison.OrdinalIgnoreCase))
+                    columnDefs.Add($"[{header}] INT IDENTITY(1,1) PRIMARY KEY"); // Make the imported ID the true Primary Key
+                else
+                    columnDefs.Add($"[{header}] NVARCHAR(MAX)");
+            }
+
+            var createTableSql = $"CREATE TABLE [{tableName}] ({string.Join(", ", columnDefs)})";
 
             using (var createCmd = new SqlCommand(createTableSql, connection))
             {
-                try
-                {
-                    await createCmd.ExecuteNonQueryAsync();
-                }
-                catch (SqlException)
-                {
-                    return BadRequest($"A database workspace named '{tableName}' already exists. Please choose a different name or rename your file.");
-                }
+                try { await createCmd.ExecuteNonQueryAsync(); }
+                catch (SqlException ex) { return BadRequest($"Database error creating table: {ex.Message}"); }
             }
+
+            // 3. Temporarily unlock the identity column if we are importing our own explicit IDs
+            if (hasIdColumn)
+            {
+                using var idOnCmd = new SqlCommand($"SET IDENTITY_INSERT [{tableName}] ON", connection);
+                await idOnCmd.ExecuteNonQueryAsync();
+            }
+
+            // 4. Blast the data into the database
             while (!stream.EndOfStream)
             {
                 var line = await stream.ReadLineAsync();
                 if (string.IsNullOrWhiteSpace(line)) continue;
 
-                var values = line.Split(',');
+                // NEW: A robust regex that splits by commas EXCEPT when they are inside quotes
+                var values = System.Text.RegularExpressions.Regex.Split(line, ",(?=(?:[^\"]*\"[^\"]*\")*[^\"]*$)");
 
-                // Build the INSERT command safely
                 var insertSql = $"INSERT INTO [{tableName}] ({string.Join(", ", headers.Select(h => $"[{h}]"))}) " +
                                 $"VALUES ({string.Join(", ", headers.Select((h, i) => $"@p{i}"))})";
 
                 using var insertCmd = new SqlCommand(insertSql, connection);
 
-                // Map the values to the parameters
                 for (int i = 0; i < headers.Length; i++)
                 {
-                    string val = i < values.Length ? values[i].Trim() : ""; // Handle missing data gracefully
-                    insertCmd.Parameters.AddWithValue($"@p{i}", val);
+                    string val = i < values.Length ? values[i] : "";
+
+                    // NEW: Clean up the double quotes generated by the JS export!
+                    if (val.StartsWith("\"") && val.EndsWith("\""))
+                    {
+                        // Remove the start/end quotes and un-escape any internal quotes
+                        val = val.Substring(1, val.Length - 2).Replace("\"\"", "\"");
+                    }
+
+                    // Handle empty strings for INT/Number columns by passing DBNull
+                    if (string.IsNullOrWhiteSpace(val) && headers[i].Equals("Id", StringComparison.OrdinalIgnoreCase))
+                    {
+                        insertCmd.Parameters.AddWithValue($"@p{i}", DBNull.Value);
+                    }
+                    else
+                    {
+                        insertCmd.Parameters.AddWithValue($"@p{i}", val);
+                    }
                 }
 
                 await insertCmd.ExecuteNonQueryAsync();
             }
 
-            return Ok($"Database workspace '{tableName}' successfully generated and populated!");
+            // 5. Lock the table back down so it stays safe!
+            if (hasIdColumn)
+            {
+                using var idOffCmd = new SqlCommand($"SET IDENTITY_INSERT [{tableName}] OFF", connection);
+                await idOffCmd.ExecuteNonQueryAsync();
+            }
+
+            return Ok(new { message = $"Table '{tableName}' successfully generated and populated!" });
         }
         [HttpGet("databases")]
         public async Task<IActionResult> GetDatabases()
@@ -233,22 +303,18 @@ namespace mini_access_api.Controllers
                 return BadRequest(new { error = ex.Message });
             }
         }
-        
+
         [HttpGet("list")]
-        public IActionResult GetTables([FromQuery] string dbName, [FromQuery] string workspace = "Northwind")
+        public IActionResult GetTables([FromQuery] string dbName)
         {
-            string query = "";
-            if (workspace == "Northwind")
-            {
-                query = "SELECT TABLE_NAME FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_TYPE = 'BASE TABLE' " +
-                        "AND TABLE_NAME IN ('Categories', 'CustomerCustomerDemo', 'CustomerDemographics', 'Customers', " +
-                        "'Employees', 'EmployeeTerritories', 'Order Details', 'Orders', 'Products', 'Region', 'Shippers', 'Suppliers', 'Territories')";
-            }
-            else
-            {
-                query = $"SELECT TABLE_NAME FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_NAME = '{workspace}'";
-            }
+            if (string.IsNullOrEmpty(dbName))
+                return BadRequest("Database name is required.");
+
             List<string> tables = new List<string>();
+
+            // Just grab EVERY standard table inside whatever database we are currently connected to
+            string query = "SELECT TABLE_NAME FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_TYPE = 'BASE TABLE'";
+
             using (SqlConnection connection = new SqlConnection(GetConnectionString(dbName)))
             {
                 connection.Open();
