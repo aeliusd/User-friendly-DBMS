@@ -1397,14 +1397,8 @@ async function deleteCurrentTable() {
         if (response.ok) {
             const result = await response.json();
             alert(result.message);
-            
-            // 1. FIXED: Using 'data-container' to match your HTML
             document.getElementById('data-container').innerHTML = '<p style="color: gray;">Select a table from the dropdown above to view data.</p>';
             
-            // 2. Hide the control panel
-            document.getElementById('control-panel').style.display = 'none';
-            
-            // 3. NEW: Automatically remove the deleted table from the dropdown
             const dropdown = document.getElementById('tableSelect');
             for (let i = 0; i < dropdown.options.length; i++) {
                 if (dropdown.options[i].value === ActiveTableName) {
@@ -1413,8 +1407,6 @@ async function deleteCurrentTable() {
                 }
             }
             dropdown.value = ""; // Reset the dropdown to the default state
-            
-            // 4. Clear the active state
             ActiveTableName = null;
             
         } else {
