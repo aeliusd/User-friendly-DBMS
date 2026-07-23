@@ -30,11 +30,13 @@ async function selectDatabase(dbName, clickedButton) {
     
     document.querySelectorAll('.db-btn').forEach(btn => btn.classList.remove('active'));
     if (clickedButton) clickedButton.classList.add('active');
+    // Reset the control panel visibility so the table dropdown appears
+    document.getElementById('control-panel').style.display = 'block';
 
     document.getElementById('current-db-title').innerText = `${dbName} Workspace`;
     document.getElementById('dashboard-view').classList.add('hidden');
     document.getElementById('data-view').classList.remove('hidden');
-
+    document.getElementById('deleteDbBtn').style.display = 'block';
     await loadTablesForWorkspace(dbName);
 }
 
@@ -1380,6 +1382,94 @@ function hideJoinColumn(colName) {
 function restoreJoinColumns() {
     hiddenJoinColumns.clear();
     renderJoinTable();
+}
+async function deleteCurrentTable() {
+    if (!currentDatabase || !ActiveTableName) return;
+    
+    if (!confirm(`Are you absolutely sure you want to PERMANENTLY delete the table '${ActiveTableName}' and all its data? This cannot be undone.`)) {
+        return;
+    }
+
+    try {
+        const fetchUrl = `${apiURL}/delete-table?dbName=${currentDatabase}&tableName=${ActiveTableName}`;
+        const response = await fetch(fetchUrl, { method: 'DELETE' });
+        
+        if (response.ok) {
+            const result = await response.json();
+            alert(result.message);
+            
+            // 1. FIXED: Using 'data-container' to match your HTML
+            document.getElementById('data-container').innerHTML = '<p style="color: gray;">Select a table from the dropdown above to view data.</p>';
+            
+            // 2. Hide the control panel
+            document.getElementById('control-panel').style.display = 'none';
+            
+            // 3. NEW: Automatically remove the deleted table from the dropdown
+            const dropdown = document.getElementById('tableSelect');
+            for (let i = 0; i < dropdown.options.length; i++) {
+                if (dropdown.options[i].value === ActiveTableName) {
+                    dropdown.remove(i);
+                    break;
+                }
+            }
+            dropdown.value = ""; // Reset the dropdown to the default state
+            
+            // 4. Clear the active state
+            ActiveTableName = null;
+            
+        } else {
+            const err = await response.json();
+            alert(`Delete Failed:\n${err.error}`);
+        }
+    } catch (err) {
+        console.error("Deletion JS Error:", err);
+        alert("An error occurred while updating the UI after deletion.");
+    }
+}
+
+async function deleteCurrentDatabase() {
+    if (!currentDatabase) return;
+
+    const userInput = prompt(`WARNING: This will permanently destroy the database '${currentDatabase}' and ALL tables inside it.\n\nType the database name exactly to confirm:`);
+    
+    if (userInput !== currentDatabase) {
+        if (userInput !== null) alert("Database name did not match. Deletion canceled.");
+        return;
+    }
+
+    try {
+        const fetchUrl = `${apiURL}/delete-database?dbName=${currentDatabase}`;
+        const response = await fetch(fetchUrl, { method: 'DELETE' });
+        
+        if (response.ok) {
+            const result = await response.json();
+            alert(result.message);
+            
+            // 1. Clear internal state variables
+            currentDatabase = null;
+            ActiveTableName = null;
+            
+            // 2. Wipe the table dropdown completely so ghost tables don't remain
+            document.getElementById('tableSelect').innerHTML = '<option value="">-- Select a Table --</option>';
+            
+            // 3. Reset the main viewing area using the correct ID
+            document.getElementById('data-container').innerHTML = '<div style="padding: 20px; color: gray;">Database deleted. Please select another database from the sidebar.</div>';
+            
+            // 4. Hide the toolbars
+            document.getElementById('control-panel').style.display = 'none';
+            document.getElementById('deleteDbBtn').style.display = 'none';
+            
+            // 5. Refresh your sidebar database list!
+            loadWorkspacesOnBoot();
+            
+        } else {
+            const err = await response.json();
+            alert(`Delete Failed:\n${err.error}`);
+        }
+    } catch (err) {
+        console.error("Database Deletion JS Error:", err);
+        alert("A network error occurred while trying to update the UI.");
+    }
 }
 
 document.addEventListener('keydown', function(event) {

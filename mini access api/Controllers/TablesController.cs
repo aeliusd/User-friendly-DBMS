@@ -314,22 +314,29 @@ namespace mini_access_api.Controllers
 
             // Just grab EVERY standard table inside whatever database we are currently connected to
             string query = "SELECT TABLE_NAME FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_TYPE = 'BASE TABLE'";
-
-            using (SqlConnection connection = new SqlConnection(GetConnectionString(dbName)))
+            try
             {
-                connection.Open();
-                using (SqlCommand command = new SqlCommand(query, connection))
+                using (SqlConnection connection = new SqlConnection(GetConnectionString(dbName)))
                 {
-                    using (SqlDataReader reader = command.ExecuteReader())
+                    connection.Open();
+                    using (SqlCommand command = new SqlCommand(query, connection))
                     {
-                        while (reader.Read())
+                        using (SqlDataReader reader = command.ExecuteReader())
                         {
-                            tables.Add(reader.GetString(0));
+                            while (reader.Read())
+                            {
+                                tables.Add(reader.GetString(0));
+                            }
                         }
                     }
                 }
+                return Ok(tables);
             }
-            return Ok(tables);
+            catch (SqlException ex)
+            {
+                // Gracefully handle missing/deleted databases without crashing Visual Studio
+                return BadRequest(new { error = $"Could not connect to database '{dbName}'. It may have been deleted or is inaccessible. Details: {ex.Message}" });
+            }
         }
         [HttpDelete("{tableName}/row")]
         public async Task<IActionResult> DeleteRow(string tableName, [FromBody] DeleteRequest request)
@@ -736,6 +743,66 @@ namespace mini_access_api.Controllers
             catch (Exception ex)
             {
                 return BadRequest(new { error = ex.Message });
+            }
+        }
+        [HttpDelete("delete-table")]
+        public async Task<IActionResult> DeleteTable([FromQuery] string dbName, [FromQuery] string tableName)
+        {
+            if (string.IsNullOrEmpty(dbName) || string.IsNullOrEmpty(tableName)) return BadRequest("Invalid names.");
+
+            try
+            {
+                using var connection = new SqlConnection(GetConnectionString(dbName));
+                await connection.OpenAsync();
+
+                // Execute the drop command
+                string sql = $"DROP TABLE [{tableName}]";
+                using var command = new SqlCommand(sql, connection);
+                await command.ExecuteNonQueryAsync();
+
+                return Ok(new { message = $"Table '{tableName}' has been permanently deleted." });
+            }
+            catch (SqlException ex)
+            {
+                // Error 3726 is SQL Server's specific code for a Foreign Key conflict
+                if (ex.Number == 3726)
+                {
+                    return BadRequest(new { error = $"Cannot delete table '{tableName}' because another table relies on it. You must delete the dependent table or the relationship first." });
+                }
+                return BadRequest(new { error = $"Error deleting table: {ex.Message}" });
+            }
+        }
+
+        [HttpDelete("delete-database")]
+        public async Task<IActionResult> DeleteDatabase([FromQuery] string dbName)
+        {
+            if (string.IsNullOrEmpty(dbName)) return BadRequest("Invalid database name.");
+
+            // Safety check so we don't accidentally blow up SQL Server's brain
+            string[] systemDbs = { "master", "tempdb", "model", "msdb" };
+            if (systemDbs.Contains(dbName.ToLower())) return BadRequest(new { error = "Cannot delete system databases." });
+
+            try
+            {
+                // CRITICAL: We must connect to 'master', not the DB we want to delete!
+                using var connection = new SqlConnection(GetConnectionString("master"));
+                await connection.OpenAsync();
+
+                // 1. Force all active connections closed (Rollback Immediate)
+                // 2. Drop the database
+                string sql = $@"
+            ALTER DATABASE [{dbName}] SET SINGLE_USER WITH ROLLBACK IMMEDIATE;
+            DROP DATABASE [{dbName}];
+        ";
+
+                using var command = new SqlCommand(sql, connection);
+                await command.ExecuteNonQueryAsync();
+
+                return Ok(new { message = $"Database '{dbName}' has been permanently destroyed." });
+            }
+            catch (Exception ex)
+            {
+                return BadRequest(new { error = $"Error deleting database: {ex.Message}" });
             }
         }
         [HttpGet("{tableName}")]
