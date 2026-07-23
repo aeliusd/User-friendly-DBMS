@@ -59,7 +59,15 @@
             </div>
             <!--Control panel-->
             <div id="control-panel" style="margin-bottom: 20px;">
+                
                 <select id="tableSelect" onchange="if(this.value) loadTableData(this.value)" style="padding: 6px; margin-right: 15px;"></select>
+                <button onclick="openRelationshipModal()" style="background: #6c757d; color: white; border: none; padding: 8px 15px; border-radius: 4px; cursor: pointer; margin-right: 10px;">
+                    🔗 Manage Relationships
+                </button>
+                <button onclick="openJoinViewModal()" style="background: #17a2b8; color: white; border: none; padding: 8px 15px; border-radius: 4px; cursor: pointer; margin-right: 10px;">
+                    View Joined Data
+                </button>
+                
                 <button onclick="exportToCSV('filtered')" style="padding: 5px 15px; cursor: pointer; background-color: #007bff; color: white; border: none; border-radius: 4px; margin-right: 10px;">
                     ⬇️ Export Current View to CSV
                 </button>
@@ -83,7 +91,53 @@
             </div>
         </div>
     </div>
+    <!-- Relationship / Foreign Key Modal -->
+    <div id="relationshipModal" class="modal" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.5); z-index: 1000; align-items:center; justify-content:center;">
+        <div style="background:white; padding:25px; border-radius:8px; width:400px; max-width:90%;">
+            <h3 style="margin-top: 0;">Create Relationship (Foreign Key)</h3>
+            
+            <p style="font-size: 14px; color: #555;">Linking <b><span id="rel-current-table"></span></b> to another table.</p>
 
+            <div style="margin-bottom: 15px;">
+                <label style="display:block; margin-bottom:5px;">1. Select Column to Link:</label>
+                <select id="rel-local-column" style="width:100%; padding:8px;"></select>
+            </div>
+
+            <div style="margin-bottom: 15px;">
+                <label style="display:block; margin-bottom:5px;">2. Select Target Table:</label>
+                <select id="rel-target-table" style="width:100%; padding:8px;"></select>
+            </div>
+
+            <div style="display:flex; justify-content:flex-end; gap:10px; margin-top: 20px;">
+                <button onclick="closeRelationshipModal()" style="padding: 8px 15px; cursor:pointer;">Cancel</button>
+                <button onclick="submitRelationship()" style="background:#007bff; color:white; border:none; padding:8px 15px; border-radius:4px; cursor:pointer;">Create Link</button>
+            </div>
+        </div>
+    </div>
+    <!-- Smart Join View Modal -->
+    <div id="joinViewModal" class="modal" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.5); z-index: 1000; align-items:center; justify-content:center;">
+        <div style="background:white; padding:25px; border-radius:8px; width:90%; max-width:1000px; max-height: 85vh; display: flex; flex-direction: column;">
+            
+            <h3 style="margin-top: 0; margin-bottom: 5px;">View Linked Data</h3>
+            <p style="font-size: 14px; color: #666; margin-top: 0; margin-bottom: 15px;">Select an existing relationship to view the combined data.</p>
+            
+            <div style="display: flex; gap: 10px; margin-bottom: 20px; align-items: center;">
+                <select id="smart-relationship-select" style="padding:8px; flex: 1;">
+                    <!-- JavaScript will populate this with smart relationships -->
+                </select>
+                <button onclick="loadJoinedData()" style="background:#007bff; color:white; border:none; padding:8px 15px; border-radius:4px; cursor:pointer;">Load View</button>
+            </div>
+
+            <div id="join-results-container" style="overflow: auto; flex: 1; border: 1px solid #ddd; background: #fafafa; border-radius: 4px;">
+                <p style="padding: 15px; color: #666; text-align: center;">Select a relationship above and click Load View.</p>
+            </div>
+
+            <div style="display:flex; justify-content:flex-end; margin-top: 20px;">
+                <button onclick="closeJoinViewModal()" style="padding: 8px 15px; cursor:pointer;">Close</button>
+            </div>
+            
+        </div>
+    </div>
     <script src="app.js"></script>
 </body>
 </html>

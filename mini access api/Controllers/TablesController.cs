@@ -114,9 +114,9 @@ namespace mini_access_api.Controllers
                 return BadRequest(new { error = "Invalid table or column name." });
             }
             // Enforce Rule: Never allow updating the primary key column via inline editing
-            if (request.ColumnName.ToLower() == "id" || request.ColumnName.EndsWith("id", System.StringComparison.OrdinalIgnoreCase))
+            if (request.ColumnName.Equals("Id", StringComparison.OrdinalIgnoreCase))
             {
-                return BadRequest(new { error = "Primary key columns cannot be modified." });
+                return BadRequest("Cannot edit primary key values");
             }
 
             // Dynamically construct the query safely using parameterized values for the data
@@ -596,6 +596,147 @@ namespace mini_access_api.Controllers
             {
                 return BadRequest(new { error = ex.Message });
             }   
+        }
+        [HttpPost("add-foreign-key")]
+        public async Task<IActionResult> AddForeignKey(
+            [FromQuery] string dbName,
+            [FromQuery] string tableName,
+            [FromQuery] string columnName,
+            [FromQuery] string targetTable,
+            [FromQuery] string targetColumn = "Id") // We default to targeting the 'Id' column
+        {
+            if (!IsValidIdentifier(dbName) || !IsValidIdentifier(tableName) ||
+        !IsValidIdentifier(columnName) || !IsValidIdentifier(targetTable) || !IsValidIdentifier(targetColumn))
+            {
+                return BadRequest(new { error = "Invalid database, table, or column name." });
+            }
+            try
+            {
+                // generate sql constraint
+                string constraintName = $"FK_{tableName}_{columnName}_{targetTable}";
+
+                // The SQL command that actually links the tables together
+                string query = $@"
+            ALTER TABLE [{tableName}] 
+            ADD CONSTRAINT [{constraintName}] 
+            FOREIGN KEY ([{columnName}]) 
+            REFERENCES [{targetTable}]([{targetColumn}])";
+
+                using (var connection = new SqlConnection(GetConnectionString(dbName)))
+                {
+                    await connection.OpenAsync();
+                    using (var command = new SqlCommand(query, connection))
+                    {
+                        await command.ExecuteNonQueryAsync();
+                    }
+                }
+                return Ok(new { message = $"Successfully linked {tableName}.{columnName} to {targetTable}.{targetColumn}!" });
+            }
+            catch (SqlException ex)
+            {
+                return BadRequest(new { error = $"Could not create relationship. DB Error: {ex.Message}" });
+            }
+        }
+        [HttpGet("view-join")]
+        public IActionResult GetJoinedView(
+        [FromQuery] string dbName,
+        [FromQuery] string mainTable,
+        [FromQuery] string fkColumn,
+        [FromQuery] string targetTable,
+        [FromQuery] string targetColumn = "Id") 
+        {
+            if (string.IsNullOrEmpty(dbName)) return BadRequest("Database name is required.");
+
+            var results = new List<Dictionary<string, object>>();
+
+            // use the targetColumn variable instead of hardcoding 'Id'
+            string query = $"SELECT m.*, t.* FROM [{mainTable}] m LEFT JOIN [{targetTable}] t ON m.[{fkColumn}] = t.[{targetColumn}]";
+
+            try
+            {
+                using (var connection = new SqlConnection(GetConnectionString(dbName)))
+                {
+                    connection.Open();
+                    using (var command = new SqlCommand(query, connection))
+                    using (var reader = command.ExecuteReader())
+                    {
+                        while (reader.Read())
+                        {
+                            var row = new Dictionary<string, object>();
+                            for (int i = 0; i < reader.FieldCount; i++)
+                            {
+                                string colName = reader.GetName(i);
+
+                                // Prevent JSON crashes if both tables have the same column name
+                                if (row.ContainsKey(colName))
+                                {
+                                    colName = $"{targetTable}_{colName}";
+                                }
+
+                                row[colName] = reader.IsDBNull(i) ? "" : reader.GetValue(i);
+                            }
+                            results.Add(row);
+                        }
+                    }
+                }
+                return Ok(results);
+            }
+            catch (Exception ex)
+            {
+                return BadRequest(new { error = ex.Message });
+            }
+        }
+
+        [HttpGet("foreign-keys")]
+        public IActionResult GetForeignKeys([FromQuery] string dbName, [FromQuery] string tableName)
+        {
+            if (string.IsNullOrEmpty(dbName) || string.IsNullOrEmpty(tableName))
+                return BadRequest("Database and table names are required.");
+
+            var relationships = new List<Dictionary<string, string>>();
+
+            // This query asks SQL Server for all outgoing links originating from the specified table
+            string query = @"
+        SELECT 
+            c_parent.name AS LocalColumn,
+            t_ref.name AS TargetTable,
+            c_ref.name AS TargetColumn
+        FROM sys.foreign_keys fk
+        INNER JOIN sys.foreign_key_columns fkc ON fk.object_id = fkc.constraint_object_id
+        INNER JOIN sys.tables t_parent ON fkc.parent_object_id = t_parent.object_id
+        INNER JOIN sys.columns c_parent ON fkc.parent_object_id = c_parent.object_id AND fkc.parent_column_id = c_parent.column_id
+        INNER JOIN sys.tables t_ref ON fkc.referenced_object_id = t_ref.object_id
+        INNER JOIN sys.columns c_ref ON fkc.referenced_object_id = c_ref.object_id AND fkc.referenced_column_id = c_ref.column_id
+        WHERE t_parent.name = @tableName";
+
+            try
+            {
+                using (var connection = new SqlConnection(GetConnectionString(dbName)))
+                {
+                    connection.Open();
+                    using (var command = new SqlCommand(query, connection))
+                    {
+                        command.Parameters.AddWithValue("@tableName", tableName);
+                        using (var reader = command.ExecuteReader())
+                        {
+                            while (reader.Read())
+                            {
+                                relationships.Add(new Dictionary<string, string>
+                        {
+                            { "LocalColumn", reader.GetString(0) },
+                            { "TargetTable", reader.GetString(1) },
+                            { "TargetColumn", reader.GetString(2) }
+                        });
+                            }
+                        }
+                    }
+                }
+                return Ok(relationships);
+            }
+            catch (Exception ex)
+            {
+                return BadRequest(new { error = ex.Message });
+            }
         }
         [HttpGet("{tableName}")]
         public IActionResult GetTableData(string tableName, [FromQuery] string dbName, [FromQuery] string search = "", [FromQuery] bool exactMatch = false, [FromQuery] string searchColumn = "ALL")

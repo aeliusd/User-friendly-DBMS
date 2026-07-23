@@ -1158,6 +1158,230 @@ async function submitNewColumn(){
         errorDiv.innerText = `Network Error: ${err.message}`;
     }
 }
+async function openRelationshipModal()
+{
+    if(!currentDatabase || !ActiveTableName) {
+        alert("Please select a database and open a table first!");
+        return;
+    }
+    document.getElementById('rel-current-table').innerText = ActiveTableName;
+    const localColumnSelect = document.getElementById('rel-local-column');
+    localColumnSelect.innerHTML = '';
+    currentColumns.forEach(col =>{
+        const option = document.createElement('option');
+        option.value = col;
+        option.textContent = col;
+        localColumnSelect.appendChild(option);
+    });
+    const targetTableSelect = document.getElementById('rel-target-table');
+    targetTableSelect.innerHTML = '<option value="">Loading tables...</option>';
+
+    try {
+        const response = await fetch(`${apiURL}/list?dbName=${currentDatabase}`);
+        if (response.ok) {
+            const tables = await response.json();
+            targetTableSelect.innerHTML = '';
+            
+            tables.forEach(table => {
+                const option = document.createElement('option');
+                option.value = table;
+                option.textContent = table;
+                targetTableSelect.appendChild(option);
+            });
+        } else {
+            targetTableSelect.innerHTML = '<option value="">Failed to load tables</option>';
+        }
+    } catch (err) {
+        console.error("Error fetching tables for relationship modal:", err);
+        targetTableSelect.innerHTML = '<option value="">Network Error</option>';
+    }
+    document.getElementById('relationshipModal').style.display = 'flex';
+}
+function closeRelationshipModal() {
+    document.getElementById('relationshipModal').style.display = 'none';
+}
+async function submitRelationship() {
+    const localColumn = document.getElementById('rel-local-column').value;
+    const targetTable = document.getElementById('rel-target-table').value;
+    if (!localColumn || !targetTable) {
+        alert("Please select both a table and a column!");
+        return;
+    }
+    try {
+        const fetchUrl = `${apiURL}/add-foreign-key?dbName=${currentDatabase}&tableName=${ActiveTableName}&columnName=${localColumn}&targetTable=${targetTable}&targetColumn=Id`;
+        
+        const response = await fetch(fetchUrl, { method: 'POST' });
+        if(response.ok) {
+            const result = await response.json();
+            alert(result.message);
+            closeRelationshipModal();
+        } else {
+            const errorData = await response.json();
+            alert(errorData.error || "Failed to create relationship.");
+        }
+    } catch(err) {
+        console.error("Error creating relationship!");
+        alert("A network error occured while creating the relationship.");
+    }
+}
+// Open the Smart Join View Modal
+async function openJoinViewModal() {
+    if (!currentDatabase || !ActiveTableName) {
+        alert("Please select a database and open a table first!");
+        return;
+    }
+
+    const selectDropdown = document.getElementById('smart-relationship-select');
+    selectDropdown.innerHTML = '<option value="">Loading relationships...</option>';
+    document.getElementById('join-results-container').innerHTML = '<p style="padding: 15px; color: #666; text-align: center;">Select a relationship above and click Load View.</p>';
+    document.getElementById('joinViewModal').style.display = 'flex';
+    
+    try {
+        const response = await fetch(`${apiURL}/foreign-keys?dbName=${currentDatabase}&tableName=${ActiveTableName}`);
+        if (response.ok) {
+            const relationships = await response.json();
+            
+            if (relationships.length === 0) {
+                selectDropdown.innerHTML = '<option value="">No foreign keys found for this table.</option>';
+                return;
+            }
+
+            selectDropdown.innerHTML = '<option value="">-- Select a Relationship --</option>';
+            
+            relationships.forEach(rel => {
+                const option = document.createElement('option');
+                // We store the data we need to construct the URL later right inside the option value
+                option.value = JSON.stringify(rel); 
+                option.textContent = `${rel.LocalColumn} ➔ linked to ${rel.TargetTable} (${rel.TargetColumn})`;
+                selectDropdown.appendChild(option);
+            });
+        }
+    } catch (err) {
+        console.error("Error fetching relationships:", err);
+        selectDropdown.innerHTML = '<option value="">Failed to load relationships</option>';
+    }
+}
+
+// Close the Join View Modal
+function closeJoinViewModal() {
+    document.getElementById('joinViewModal').style.display = 'none';
+}
+
+// Fetch and render the joined data
+// NEW: Variables to track the joined data and hidden columns
+let currentJoinData = [];
+let hiddenJoinColumns = new Set();
+
+// Fetch the joined data from C#
+async function loadJoinedData() {
+    const selectedValue = document.getElementById('smart-relationship-select').value;
+    const container = document.getElementById('join-results-container');
+
+    if (!selectedValue) {
+        alert("Please select a valid relationship first.");
+        return;
+    }
+
+    const rel = JSON.parse(selectedValue);
+    container.innerHTML = "<p style='padding: 15px; text-align: center;'>Loading data...</p>";
+
+    try {
+        const fetchUrl = `${apiURL}/view-join?dbName=${currentDatabase}&mainTable=${ActiveTableName}&fkColumn=${rel.LocalColumn}&targetTable=${rel.TargetTable}&targetColumn=${rel.TargetColumn}`;
+        const response = await fetch(fetchUrl);
+        
+        if (!response.ok) {
+            const err = await response.json();
+            container.innerHTML = `<p style="color:red; padding:15px;">Database Error: ${err.error}</p>`;
+            return;
+        }
+
+        currentJoinData = await response.json();
+        
+        if (currentJoinData.length === 0) {
+            container.innerHTML = "<p style='padding:15px; text-align:center;'>No joined data found.</p>";
+            return;
+        }
+
+        // Clear any previously hidden columns when loading a new relationship
+        hiddenJoinColumns.clear(); 
+        
+        // Render the table!
+        renderJoinTable();
+
+    } catch (err) {
+        console.error("Error loading joined data:", err);
+        container.innerHTML = "<p style='color:red; padding:15px;'>A network error occurred.</p>";
+    }
+}
+
+// Function to render the table with colors and hidden column logic
+function renderJoinTable() {
+    const container = document.getElementById('join-results-container');
+    if (!currentJoinData || currentJoinData.length === 0) return;
+
+    const allColumns = Object.keys(currentJoinData[0]);
+    const visibleColumns = allColumns.filter(col => !hiddenJoinColumns.has(col));
+
+    let html = '';
+
+    // If there are hidden columns, show a "Restore" banner at the top
+    if (hiddenJoinColumns.size > 0) {
+        html += `
+        <div style="padding: 10px; background: #fff3cd; border-bottom: 1px solid #ffeeba; display: flex; justify-content: space-between; align-items: center; position: sticky; top: 0; z-index: 2;">
+            <span style="color: #856404; font-size: 14px; font-weight: bold;">Hidden Columns: ${hiddenJoinColumns.size}</span>
+            <button onclick="restoreJoinColumns()" style="background: #ffc107; color: #212529; border: none; padding: 4px 10px; border-radius: 4px; cursor: pointer; font-size: 12px; font-weight: bold;">Restore All</button>
+        </div>`;
+    }
+
+    html += '<table style="width:100%; border-collapse: collapse; text-align: left;"><thead><tr>';
+    
+    visibleColumns.forEach(col => {
+        // Is this column from the main table, or the joined table?
+        const isMainTable = currentColumns.includes(col);
+        
+        // Main table gets standard Grey. Joined table gets a nice Light Blue.
+        const headerBg = isMainTable ? '#e9ecef' : '#d1ecf1';
+        
+        html += `
+        <th style="border: 1px solid #ccc; padding: 10px; background-color: ${headerBg}; position: sticky; top: ${hiddenJoinColumns.size > 0 ? '40px' : '0'}; z-index: 1;">
+            <div style="display: flex; justify-content: space-between; align-items: center;">
+                <span>${col}</span>
+                <span onclick="hideJoinColumn('${col}')" style="cursor: pointer; color: #dc3545; font-size: 10px; margin-left: 15px;" title="Hide Column">❌</span>
+            </div>
+        </th>`;
+    });
+    html += '</tr></thead><tbody>';
+
+    currentJoinData.forEach(row => {
+        html += '<tr>';
+        visibleColumns.forEach(col => {
+            const isMainTable = currentColumns.includes(col);
+            
+            // Add a very faint blue background to the joined data cells so the columns stand out
+            const cellBg = isMainTable ? '#ffffff' : '#f4f8fb';
+            
+            const cellValue = row[col] !== null && row[col] !== undefined ? row[col] : '';
+            html += `<td style="border: 1px solid #eee; padding: 10px; background-color: ${cellBg};">${cellValue}</td>`;
+        });
+        html += '</tr>';
+    });
+
+    html += '</tbody></table>';
+    container.innerHTML = html;
+}
+
+// Helper function to hide a column and immediately re-render
+function hideJoinColumn(colName) {
+    hiddenJoinColumns.add(colName);
+    renderJoinTable();
+}
+
+// Helper function to clear hidden columns and immediately re-render
+function restoreJoinColumns() {
+    hiddenJoinColumns.clear();
+    renderJoinTable();
+}
+
 document.addEventListener('keydown', function(event) {
     // Detects Ctrl + Z (or Cmd + Z on Mac)
    if (event.ctrlKey || event.metaKey) {
