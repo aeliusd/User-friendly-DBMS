@@ -1463,7 +1463,106 @@ async function deleteCurrentDatabase() {
         alert("A network error occurred while trying to update the UI.");
     }
 }
+function openSqlModal() {
+    if (!currentDatabase) {
+        alert("Please select a database first!");
+        return;
+    }
+    document.getElementById('sqlModal').style.display = 'flex';
+    document.getElementById('sql-results-container').innerHTML = '<p style="padding: 15px; color: gray; text-align: center;">Results will appear here.</p>';
+}
 
+function closeSqlModal() {
+    document.getElementById('sqlModal').style.display = 'none';
+}
+
+async function runRawSql() {
+    const query = document.getElementById('sql-query-input').value.trim();
+    const container = document.getElementById('sql-results-container');
+
+    if (!query) {
+        alert("Please enter a SQL query.");
+        return;
+    }
+
+    container.innerHTML = "<p style='padding: 15px; text-align: center;'>Executing...</p>";
+
+    try {
+        const response = await fetch(`${apiURL}/custom-query`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ dbName: currentDatabase, query: query })
+        });
+        
+        const result = await response.json();
+
+        if (!response.ok) {
+            container.innerHTML = `<div style="color:#721c24; background-color:#f8d7da; padding:15px; border-bottom:1px solid #f5c6cb;"><b>SQL Error:</b><br>${result.error}</div>`;
+            return;
+        }
+
+        // Handle Non-Query Results (UPDATE, DELETE, INSERT, CREATE, etc.)
+        if (result.type === 'message') {
+            container.innerHTML = `<div style="color:#155724; background-color:#d4edda; padding:15px; border-bottom:1px solid #c3e6cb;"><b>Success:</b> ${result.message}</div>`;
+            
+            // NEW: Silently refresh the table dropdown so new/deleted tables show up instantly!
+            try {
+                const tableResponse = await fetch(`${apiURL}/list?dbName=${currentDatabase}`);
+                if (tableResponse.ok) {
+                    const tables = await tableResponse.json();
+                    const dropdown = document.getElementById('tableSelect');
+                    
+                    // Remember what the user was looking at before the refresh
+                    const currentSelection = dropdown.value; 
+                    
+                    dropdown.innerHTML = '<option value="">-- Select a Table --</option>';
+                    tables.forEach(table => {
+                        dropdown.innerHTML += `<option value="${table}">${table}</option>`;
+                    });
+                    
+                    // Put their selection back if the table still exists
+                    if (tables.includes(currentSelection)) {
+                        dropdown.value = currentSelection;
+                    }
+                }
+            } catch (e) {
+                console.error("Failed to silently refresh table list:", e);
+            }
+        }
+        // Handle SELECT Query Results
+        else if (result.type === 'data') {
+            const data = result.data;
+            if (data.length === 0) {
+                container.innerHTML = "<p style='padding:15px; text-align:center;'>Query executed successfully. 0 rows returned.</p>";
+                return;
+            }
+
+            // Dynamically generate the HTML table from the JSON keys
+            const columns = Object.keys(data[0]);
+            let html = '<table style="width:100%; border-collapse: collapse; text-align: left;"><thead><tr>';
+            
+            columns.forEach(col => {
+                html += `<th style="border: 1px solid #ccc; padding: 8px 12px; background-color: #e9ecef; position: sticky; top: 0;">${col}</th>`;
+            });
+            html += '</tr></thead><tbody>';
+
+            data.forEach(row => {
+                html += '<tr>';
+                columns.forEach(col => {
+                    const val = row[col] !== null && row[col] !== undefined ? row[col] : '';
+                    html += `<td style="border: 1px solid #eee; padding: 8px 12px; background-color: white;">${val}</td>`;
+                });
+                html += '</tr>';
+            });
+            
+            html += '</tbody></table>';
+            container.innerHTML = html;
+        }
+    } catch (err) {
+        console.error(err);
+        container.innerHTML = "<p style='color:red; padding: 15px;'>A network error occurred while executing the query.</p>";
+    }
+}
 document.addEventListener('keydown', function(event) {
     // Detects Ctrl + Z (or Cmd + Z on Mac)
    if (event.ctrlKey || event.metaKey) {

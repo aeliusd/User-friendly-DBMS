@@ -25,7 +25,11 @@ namespace mini_access_api.Controllers
         public string PrimaryKeyName { get; set; }
         public string PrimaryKeyValue { get; set; }
     }
-
+    public class CustomQueryModel
+    {
+        public string DbName { get; set; }
+        public string Query { get; set; }
+    }
 
     [Route("api/[controller]")]
     [ApiController]
@@ -803,6 +807,56 @@ namespace mini_access_api.Controllers
             catch (Exception ex)
             {
                 return BadRequest(new { error = $"Error deleting database: {ex.Message}" });
+            }
+        }
+        [HttpPost("custom-query")]
+        public async Task<IActionResult> ExecuteCustomQuery([FromBody] CustomQueryModel req)
+        {
+            if (string.IsNullOrEmpty(req.DbName) || string.IsNullOrEmpty(req.Query))
+                return BadRequest(new { error = "Database name and query are required." });
+
+            try
+            {
+                var results = new List<Dictionary<string, object>>();
+                int recordsAffected = 0;
+                bool isSelect = false;
+                using (var connection = new SqlConnection(GetConnectionString(req.DbName)))
+                {
+                    await connection.OpenAsync();
+                    using (var command = new SqlCommand(req.Query, connection))
+                    {
+                        using (var reader = await command.ExecuteReaderAsync())
+                        {
+                            if(reader.FieldCount > 0)
+                            {
+                                isSelect = true;
+                                while (await reader.ReadAsync())
+                                {
+                                    var row = new Dictionary<string, object>();
+                                    for (int i = 0; i < reader.FieldCount; i++)
+                                    {
+                                        row[reader.GetName(i)] = reader.IsDBNull(i) ? "" : reader.GetValue(i);
+                                    }
+                                    results.Add(row);
+                                }
+                            } else
+                            {
+                                recordsAffected = reader.RecordsAffected;
+                            }
+                        }
+                    }
+                }
+                if(isSelect)
+                {
+                    return Ok(new { type = "data", data = results });
+                } else
+                {
+                    return Ok(new { type = "message", message = $"Command completed successfully. {recordsAffected} row(s) affected." });
+                }
+            }
+            catch (SqlException ex)
+            {
+                return BadRequest(new { error = ex.Message });
             }
         }
         [HttpGet("{tableName}")]
