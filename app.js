@@ -1257,6 +1257,7 @@ async function openJoinViewModal() {
     const selectDropdown = document.getElementById('smart-relationship-select');
     selectDropdown.innerHTML = '<option value="">Loading relationships...</option>';
     document.getElementById('join-results-container').innerHTML = '<p style="padding: 15px; color: #666; text-align: center;">Select a relationship above and click Load View.</p>';
+    document.getElementById('join-search-container').style.display = 'none';
     document.getElementById('joinViewModal').style.display = 'flex';
     
     try {
@@ -1327,7 +1328,10 @@ async function loadJoinedData() {
 
         // Clear any previously hidden columns when loading a new relationship
         hiddenJoinColumns.clear(); 
-        
+        // clear old searches and show the search box
+        const searchBox = document.getElementById('join-search-box');
+        if (searchBox) searchBox.value = ''; 
+        document.getElementById('join-search-container').style.display = 'block';
         // Render the table!
         renderJoinTable();
 
@@ -1338,10 +1342,27 @@ async function loadJoinedData() {
 }
 
 // Function to render the table with colors and hidden column logic
+// Function to render the table with colors, hidden columns, and LIVE SEARCH
 function renderJoinTable() {
     const container = document.getElementById('join-results-container');
     if (!currentJoinData || currentJoinData.length === 0) return;
 
+    // 1. Grab the search text from the box
+    const searchBox = document.getElementById('join-search-box');
+    const searchTerm = searchBox ? searchBox.value.toLowerCase().trim() : '';
+
+    // 2. Filter the data! (If search is empty, it just keeps all rows)
+    let dataToRender = currentJoinData;
+    if (searchTerm !== '') {
+        dataToRender = currentJoinData.filter(row => {
+            // Checks every cell in the row to see if it matches your search
+            return Object.values(row).some(val => 
+                val !== null && val !== undefined && String(val).toLowerCase().includes(searchTerm)
+            );
+        });
+    }
+
+    // Always use the original data to get the column headers, so they don't disappear on an empty search
     const allColumns = Object.keys(currentJoinData[0]);
     const visibleColumns = allColumns.filter(col => !hiddenJoinColumns.has(col));
 
@@ -1352,17 +1373,14 @@ function renderJoinTable() {
         html += `
         <div style="padding: 10px; background: #fff3cd; border-bottom: 1px solid #ffeeba; display: flex; justify-content: space-between; align-items: center; position: sticky; top: 0; z-index: 2;">
             <span style="color: #856404; font-size: 14px; font-weight: bold;">Hidden Columns: ${hiddenJoinColumns.size}</span>
-            <button onclick="restoreJoinColumns()" style="background: #ffc107; color: #212529; border: none; padding: 4px 10px; border-radius: 4px; cursor: pointer; font-size: 12px; font-weight: bold;">Restore All</button>
+            <button onclick="restoreJoinColumns()" class="btn btn-primary" style="padding: 4px 10px; font-size: 12px;">Restore All</button>
         </div>`;
     }
 
     html += '<table style="width:100%; border-collapse: collapse; text-align: left;"><thead><tr>';
     
     visibleColumns.forEach(col => {
-        // Is this column from the main table, or the joined table?
         const isMainTable = currentColumns.includes(col);
-        
-        // Main table gets standard Grey. Joined table gets a nice Light Blue.
         const headerBg = isMainTable ? '#e9ecef' : '#d1ecf1';
         
         html += `
@@ -1375,19 +1393,23 @@ function renderJoinTable() {
     });
     html += '</tr></thead><tbody>';
 
-    currentJoinData.forEach(row => {
-        html += '<tr>';
-        visibleColumns.forEach(col => {
-            const isMainTable = currentColumns.includes(col);
-            
-            // Add a very faint blue background to the joined data cells so the columns stand out
-            const cellBg = isMainTable ? '#ffffff' : '#f4f8fb';
-            
-            const cellValue = row[col] !== null && row[col] !== undefined ? row[col] : '';
-            html += `<td style="border: 1px solid #eee; padding: 10px; background-color: ${cellBg};">${cellValue}</td>`;
+    // 3. Inform the user if their search found nothing
+    if (dataToRender.length === 0) {
+        html += `<tr><td colspan="${visibleColumns.length}" style="padding: 20px; text-align: center; color: gray; font-style: italic;">No matching records found for "${searchTerm}".</td></tr>`;
+    } else {
+        // 4. Loop over the FILTERED data
+        dataToRender.forEach(row => {
+            html += '<tr>';
+            visibleColumns.forEach(col => {
+                const isMainTable = currentColumns.includes(col);
+                const cellBg = isMainTable ? '#ffffff' : '#f4f8fb';
+                const cellValue = row[col] !== null && row[col] !== undefined ? row[col] : '';
+                
+                html += `<td style="border: 1px solid #eee; padding: 10px; background-color: ${cellBg};">${cellValue}</td>`;
+            });
+            html += '</tr>';
         });
-        html += '</tr>';
-    });
+    }
 
     html += '</tbody></table>';
     container.innerHTML = html;
@@ -1586,6 +1608,76 @@ async function runRawSql() {
     } catch (err) {
         console.error(err);
         container.innerHTML = "<p style='color:red; padding: 15px;'>A network error occurred while executing the query.</p>";
+    }
+}
+// --- SCHEMA VISUALIZER LOGIC ---
+
+function openSchemaModal() {
+    if (!currentDatabase) {
+        alert("Please select a database first!");
+        return;
+    }
+    document.getElementById('schema-db-name').innerText = currentDatabase;
+    document.getElementById('schemaModal').style.display = 'flex';
+    generateSchemaDiagram();
+}
+
+function closeSchemaModal() {
+    document.getElementById('schemaModal').style.display = 'none';
+    document.getElementById('schema-content').innerHTML = '<p style="color: gray;">Generating map...</p>'; // Reset
+}
+
+async function generateSchemaDiagram() {
+    const container = document.getElementById('schema-content');
+
+    try {
+        // 1. Fetch all tables
+        const tablesRes = await fetch(`${apiURL}/list?dbName=${currentDatabase}`);
+        const tables = await tablesRes.json();
+
+        if (tables.length === 0) {
+            container.innerHTML = '<p style="color: gray;">This database has no tables yet.</p>';
+            return;
+        }
+
+        container.innerHTML = '<p style="color: gray;">Analyzing relationships... please wait.</p>';
+
+        // 2. Fetch Foreign Keys for EVERY table simultaneously
+        const fkPromises = tables.map(table =>
+            fetch(`${apiURL}/foreign-keys?dbName=${currentDatabase}&tableName=${table}`).then(r => r.json())
+        );
+        const allForeignKeys = await Promise.all(fkPromises);
+
+        // 3. Begin building the Mermaid Syntax String
+        let mermaidSyntax = 'erDiagram\n';
+
+        tables.forEach((table, index) => {
+            const tableFks = allForeignKeys[index];
+            
+            // FIX 1: Sanitize table names! (Convert spaces/hyphens to underscores)
+            const safeTable = table.replace(/[^a-zA-Z0-9_]/g, '_');
+
+            if (tableFks && tableFks.length > 0) {
+                // If it has links, draw them
+                tableFks.forEach(fk => {
+                    const safeTarget = fk.TargetTable.replace(/[^a-zA-Z0-9_]/g, '_');
+                    mermaidSyntax += `    ${safeTarget} ||--o{ ${safeTable} : "${fk.LocalColumn}"\n`;
+                });
+            } else {
+                // FIX 2: If it has no links, just declare the name! No empty { } brackets.
+                mermaidSyntax += `    ${safeTable}\n`;
+            }
+        });
+
+        // 4. Inject the string into a div and let Mermaid draw the graphics
+        container.innerHTML = `<div class="mermaid" style="padding: 20px;">\n${mermaidSyntax}\n</div>`;
+        
+        // Command Mermaid to process the new text
+        mermaid.init(undefined, document.querySelectorAll('.mermaid'));
+
+    } catch (err) {
+        console.error("Schema Generation Error:", err);
+        container.innerHTML = '<p style="color:red; padding: 20px;">An error occurred while generating the map.</p>';
     }
 }
 document.addEventListener('keydown', function(event) {
