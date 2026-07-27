@@ -6,14 +6,68 @@
     <style>
         /* Simple structure rules to keep things organized */
         body { display: flex; font-family: sans-serif; margin: 0; height: 100vh; }
-        #sidebar { width: 250px; background: #2c3e50; color: white; padding: 20px; display: flex; flex-direction: column; gap: 15px; }
-        #sidebar h3 { margin-top: 0; border-bottom: 1px solid #34495e; padding-bottom: 10px; }
+        #sidebar { 
+            width: 250px; background: #2c3e50; color: white; padding: 20px; 
+            display: flex; flex-direction: column; gap: 15px; 
+            transition: margin-left 0.3s ease; 
+            position: relative; /* Allows the tab to attach to the edge */
+        }
+        
+        /* Collapsed state */
+        #sidebar.collapsed {
+            margin-left: -290px; /* 250px width + 40px total padding left/right */
+        }#sidebar h3 { margin-top: 0; border-bottom: 1px solid #34495e; padding-bottom: 10px; }
         .db-btn { background: #34495e; color: white; border: none; padding: 10px; text-align: left; cursor: pointer; border-radius: 4px; width: 100%; }
         .db-btn:hover { background: #1abc9c; }
         .db-btn.active { background: #1abc9c; font-weight: bold; }
         #upload-section { margin-top: auto; border-top: 1px solid #34495e; padding-top: 15px; }
-        #main-content { flex: 1; padding: 20px; background: #ecf0f1; overflow-y: auto; }
+        #main-content { flex: 1; padding: 20px 20px 20px 60px; background: #ecf0f1; overflow-y: auto; }
         .hidden { display: none; }
+        /* --- UI Button & Toolbar Styles --- */
+        .btn { 
+            padding: 8px 15px; border-radius: 4px; border: none; cursor: pointer; 
+            font-weight: 500; font-size: 13px; display: inline-flex; align-items: center; 
+            justify-content: center; transition: all 0.2s ease; box-shadow: 0 1px 2px rgba(0,0,0,0.1); 
+        }
+        .btn:hover { transform: translateY(-1px); box-shadow: 0 3px 6px rgba(0,0,0,0.15); filter: brightness(1.1); }
+        .btn:active { transform: translateY(0); box-shadow: none; filter: brightness(0.9); }
+        
+        /* Button Colors */
+        .btn-primary { background-color: #007bff; color: white; }
+        .btn-secondary { background-color: #6c757d; color: white; }
+        .btn-info { background-color: #17a2b8; color: white; }
+        .btn-danger { background-color: #dc3545; color: white; }
+        .btn-dark { background-color: #343a40; color: white; }
+
+        /* Toolbar Layout */
+        .toolbar { 
+            display: flex; flex-direction: column; gap: 15px; background: #e9ecef; 
+            padding: 15px; border-radius: 6px; box-shadow: inset 0 1px 3px rgba(0,0,0,0.05); 
+        }
+        .toolbar-row { display: flex; flex-wrap: wrap; gap: 15px; align-items: center; justify-content: space-between; }
+        .toolbar-group { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+        
+        /* Form Inputs */
+        .form-control { padding: 7px 10px; border: 1px solid #ccc; border-radius: 4px; font-size: 13px; }
+    /* --- Data Grid Optimization --- */
+        
+        
+        #data-container table {
+            width: max-content; /* Hugs the data tightly, preventing empty stretching */
+            border-collapse: collapse;
+            white-space: nowrap; /* Forces all data to stay on a single line */
+            background-color: white;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.1); /* Adds a subtle, professional shadow */
+        }
+        
+        #data-container th, #data-container td {
+            max-width: 250px; /* Prevents long text from ruining the table layout */
+            overflow: hidden;
+            text-overflow: ellipsis; /* Adds '...' if the text is longer than 250px */
+            padding: 8px 12px;
+            border: 1px solid #e0e0e0;
+        }
+    
     </style>
     <link rel="apple-touch-icon" sizes="180x180" href="icons/apple-touch-icon.png">
     <link rel="icon" type="image/png" sizes="32x32" href="icons/favicon-32x32.png">
@@ -24,6 +78,10 @@
 <body>
 
     <div id="sidebar">
+        <!-- Attached Hamburger Tab -->
+        <button onclick="document.getElementById('sidebar').classList.toggle('collapsed')" style="position: absolute; left: 100%; top: 20px; width: 35px; height: 35px; background: #2c3e50; color: white; border: none; font-size: 18px; cursor: pointer; border-radius: 0 6px 6px 0; z-index: 100; display: flex; align-items: center; justify-content: center; box-shadow: 3px 2px 5px rgba(0,0,0,0.1);">
+            ☰
+        </button>
         <h3>Databases</h3>
         <!-- New Database Button -->
         <button onclick="promptCreateDatabase()" style="width: 100%; background: #28a745; color: white; border: none; padding: 8px; cursor: pointer; border-radius: 4px; margin-bottom: 15px; font-weight: bold;">
@@ -61,38 +119,60 @@
                     </div>
                 </div>
             </div>
+            
             <!--Control panel-->
             <div id="control-panel" style="margin-bottom: 20px;">
-                
-                <select id="tableSelect" onchange="if(this.value) loadTableData(this.value)" style="padding: 6px; margin-right: 15px;"></select>
-                <button onclick="openRelationshipModal()" style="background: #6c757d; color: white; border: none; padding: 8px 15px; border-radius: 4px; cursor: pointer; margin-right: 10px;">
-                    🔗 Manage Relationships
-                </button>
-                <button onclick="openJoinViewModal()" style="background: #17a2b8; color: white; border: none; padding: 8px 15px; border-radius: 4px; cursor: pointer; margin-right: 10px;">
-                    View Joined Data
-                </button>
-                <button onclick="deleteCurrentTable()" style="background: #dc3545; color: white; border: none; padding: 8px 15px; border-radius: 4px; cursor: pointer; margin-right: 10px;">
-                    🗑️ Delete Table
-                </button>
-                <button onclick="openSqlModal()" style="background: #343a40; color: white; border: none; padding: 8px 15px; border-radius: 4px; cursor: pointer; margin-right: 10px;">
-                    ⚙️ Raw SQL
-                </button>
-                <button onclick="exportToCSV('filtered')" style="padding: 5px 15px; cursor: pointer; background-color: #007bff; color: white; border: none; border-radius: 4px; margin-right: 10px;">
-                    ⬇️ Export Current View to CSV
-                </button>
-                <button onclick="exportToCSV('full')" style="padding: 5px 15px; cursor: pointer; background-color: #6c757d; color: white; border: none; border-radius: 4px;">
-                    ⬇️ Export Entire Table to CSV
-                </button>
-                <br>
-                <input type="text" id="search-box" placeholder="Search data..." style="padding: 5px;">
-                <select id="column-dropdown" style="padding: 5px;">
-                    <option value="ALL">All Columns</option>
-                </select>
-                <label style="margin: 0 10px;">
-                    <input type="checkbox" id="exact-match-checkbox"> Exact Match
-                </label>
-                <button onclick="executeSearch()" style="padding: 5px 15px; cursor: pointer;">Search</button>
-                <button onclick="clearSearch()" style="padding: 5px 15px; cursor: pointer;">Clear</button>
+                <div class="toolbar">
+                    
+                    <!-- Top Row: Table Selector & Core Tools -->
+                    <div class="toolbar-row">
+                        <div class="toolbar-group">
+                            <span style="font-weight: bold; color: #444; font-size: 14px;">Active Table:</span>
+                            <!-- CHANGED: Now points to a new JS function -->
+                            <select id="tableSelect" onchange="handleTableSelection(this.value)" class="form-control" style="min-width: 180px;"></select>
+                        </div>
+                        
+                        <div class="toolbar-group">
+                            <!-- NEW: Hidden wrapper for table-specific top buttons -->
+                            <div id="table-action-buttons" style="display: none; gap: 10px;">
+                                <button onclick="openRelationshipModal()" class="btn btn-secondary">🔗 Manage Relationships</button>
+                                <button onclick="openJoinViewModal()" class="btn btn-info">🧩 View Relationships</button>
+                                <button onclick="deleteCurrentTable()" class="btn btn-danger">🗑️ Delete Table</button>
+                            </div>
+                            
+                            <!-- Always visible (only requires a Database, not a Table) -->
+                            <button onclick="openSqlModal()" class="btn btn-dark">⚙️ Custom Command</button>
+                        </div>
+                    </div>
+
+                    <!-- NEW: Hidden wrapper for the entire bottom row -->
+                    <div id="table-specific-tools" style="display: none; flex-direction: column; gap: 15px;">
+                        
+                        <!-- Divider Line -->
+                        <hr style="border: 0; border-top: 1px solid #ccc; width: 100%; margin: 0;">
+
+                        <!-- Bottom Row: Search & Exports -->
+                        <div class="toolbar-row">
+                            <div class="toolbar-group">
+                                <input type="text" id="search-box" placeholder="Search data..." class="form-control" style="width: 220px;">
+                                <select id="column-dropdown" class="form-control">
+                                    <option value="ALL">All Columns</option>
+                                </select>
+                                <label style="display: flex; align-items: center; gap: 5px; font-size: 13px; cursor: pointer; user-select: none;">
+                                    <input type="checkbox" id="exact-match-checkbox"> Exact Match
+                                </label>
+                                <button onclick="executeSearch()" class="btn btn-primary" style="margin-left: 5px;">🔍 Search</button>
+                                <button onclick="clearSearch()" class="btn btn-secondary">Clear</button>
+                            </div>
+
+                            <div class="toolbar-group">
+                                <button onclick="exportToCSV('filtered')" class="btn btn-primary">⬇️ Export Current View</button>
+                                <button onclick="exportToCSV('full')" class="btn btn-secondary">⬇️ Export Entire Table</button>
+                            </div>
+                        </div>
+
+                    </div>
+                </div>
             </div>
 
             <div id="data-container">

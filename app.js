@@ -225,6 +225,10 @@ async function loadTablesForWorkspace(dbName) {
         document.getElementById('search-box').value = '';
         document.getElementById('exact-match-checkbox').checked = false;
         document.getElementById('column-dropdown').innerHTML = '<option value="ALL">All Columns</option>';
+        
+        // Hide table-specific tools when loading a new workspace
+        document.getElementById('table-action-buttons').style.display = 'none';
+        document.getElementById('table-specific-tools').style.display = 'none';
     }
     catch(err) {
         console.error("Error loading workspace:", err);
@@ -232,7 +236,21 @@ async function loadTablesForWorkspace(dbName) {
     }
 }
 
-
+// Handles showing/hiding the UI tools when a table is selected
+function handleTableSelection(tableName) {
+    if (tableName) {
+        // Show the tools and load the data
+        document.getElementById('table-action-buttons').style.display = 'flex';
+        document.getElementById('table-specific-tools').style.display = 'flex';
+        loadTableData(tableName);
+    } else {
+        // Hide the tools and clear the screen if they revert to "-- Select a Table --"
+        ActiveTableName = '';
+        document.getElementById('table-action-buttons').style.display = 'none';
+        document.getElementById('table-specific-tools').style.display = 'none';
+        document.getElementById('data-container').innerHTML = '<p style="color: gray;">Select a table from the dropdown above to view data.</p>';
+    }
+}
 // Load data for a specific table, optionally with search parameters
 async function loadTableData(tableName, searchQuery = '', isExactMatch = false, searchColumn = 'ALL') {
     if(ActiveTableName !== tableName) {
@@ -335,8 +353,9 @@ function clearSearch() {
 // Redraw the table based on the current globalTableData and currentColumns
 function renderTable() {
     const container = document.getElementById('data-container');
-    let html = '<table border="1" cellpadding="5" cellspacing="0"><tr>';
-    const pkColumnName = currentColumns[0];
+    // add a scrollable wrapper div before the table starts
+// Added the ID so our keyboard listener can find it!
+    let html = '<div id="table-scroll-wrapper" style="width: 100%; max-width: 100%; overflow-x: auto; padding-bottom: 15px;"><table><tr>';    const pkColumnName = currentColumns[0];
     const visibleColumns = currentColumns.filter(col => !hiddenColumns.includes(col));
 
     visibleColumns.forEach(column => {
@@ -352,8 +371,7 @@ function renderTable() {
         } else {
             // Added the subtle (hide) text link next to the Delete button
             html += `<th style="cursor: pointer; background-color: #f2f2f2;" onclick="sortTable('${column}')">
-                        <div style="display: flex; justify-content: space-between; align-items: center;">
-                            <span>${column}${arrow}</span>
+                            <div style="display: flex; justify-content: flex-start; align-items: center; gap: 10px;">                            <span>${column}${arrow}</span>
                             <div>
                                 <button onclick="event.stopPropagation(); hideColumn('${column}')" title="Hide Column" style="color: #6c757d; background: none; border: none; cursor: pointer; font-size: 12px; margin-left: 10px; padding: 0;">(hide)</button>
                                 <button onclick="event.stopPropagation(); promptDeleteColumn('${column}')" title="Delete Column" style="color: #dc3545; background: none; border: none; cursor: pointer; font-size: 14px; font-weight: bold; margin-left: 5px;">✖</button>
@@ -430,27 +448,27 @@ function renderTable() {
                 
                 // Create a clean link where the sentence is the display text
                 cellData = `<a href="${url}" target="_blank" style="color: #007bff; text-decoration: none;">${sentence}</a>`;
-            }  
-                // Safety net for actual long text (like the Notes column!)
-            else if (typeof cellData === 'string' && cellData.length > 100) {
+            } 
+            // Safety net for actual long text (like the Notes column!)
+            else if (typeof cellData === 'string' && cellData.length > 40) {
                 // 1. Make the text safe so random < or > characters don't break the table HTML
                 let safeText = cellData.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-                let shortText = safeText.substring(0, 80) + '...';
+                let shortText = safeText.substring(0, 30) + '...';
                 
-                // 2. Create a toggleable HTML block
+                // 2. Create a toggleable HTML block (with white-space: normal to override the CSS!)
                 cellData = `
-                    <div>
+                    <div style="white-space: normal; line-height: 1.4;">
                         <span style="display: inline;">
                             ${shortText} 
                             <a href="javascript:void(0);" 
                             onclick="this.parentElement.style.display='none'; this.parentElement.nextElementSibling.style.display='inline';" 
-                            style="color: #007bff; text-decoration: none; font-weight: bold;">(more)</a>
+                            style="color: #007bff; text-decoration: none; font-weight: bold; margin-left: 5px;">(more)</a>
                         </span>
                         <span style="display: none;">
                             ${safeText} 
                             <a href="javascript:void(0);" 
                             onclick="this.parentElement.style.display='none'; this.parentElement.previousElementSibling.style.display='inline';" 
-                            style="color: #007bff; text-decoration: none; font-weight: bold;">(less)</a>
+                            style="color: #007bff; text-decoration: none; font-weight: bold; margin-left: 5px;">(less)</a>
                         </span>
                     </div>
                 `;
@@ -479,17 +497,19 @@ function renderTable() {
         </td>`;
         html += '</tr>';
     });
-    html += '</table>';
+    html += '</table></div>';
 
     // pagination control
+    let paginationHtml = ''; // Create a variable to hold the HTML
     if (totalPages > 1) {
-        html += `
+        paginationHtml= `
         <div style="margin-top: 15px; display: flex; align-items: center; gap: 15px; font-family: sans-serif;">
         <button onclick="changePage(-1)" ${currentPage === 1 ? 'disabled' : ''} style="padding: 5px 15px; cursor: pointer;">Previous</button>
         <span style="font-weight: bold;">Page ${currentPage} of ${totalPages}</span>
         <button onclick="changePage(1)" ${currentPage === totalPages ? 'disabled' : ''} style="padding: 5px 15px; cursor: pointer;">Next</button>
         </div>
         `;
+        html += paginationHtml;
     }
     //hidden dropdown
     let hiddenDropdownHtml = '';
@@ -525,6 +545,7 @@ function renderTable() {
                 </button>
             </div>
         </div>
+        ${paginationHtml} 
     ` + html;
 }
 // Sort table data based on the clicked column
@@ -1409,6 +1430,10 @@ async function deleteCurrentTable() {
             dropdown.value = ""; // Reset the dropdown to the default state
             ActiveTableName = null;
             
+            // Hide table-specific tools now that the table is gone
+            document.getElementById('table-action-buttons').style.display = 'none';
+            document.getElementById('table-specific-tools').style.display = 'none';
+            
         } else {
             const err = await response.json();
             alert(`Delete Failed:\n${err.error}`);
@@ -1572,6 +1597,19 @@ document.addEventListener('keydown', function(event) {
         } else if (event.key.toLowerCase() === 'y') {
             event.preventDefault();
             redoLastAction();
+        }
+    }
+    // Allow Left/Right arrow keys to seamlessly scroll the table
+    // SAFETY CHECK: Make sure the user isn't currently typing in an input box!
+    const activeTag = document.activeElement ? document.activeElement.tagName : '';
+    if (activeTag !== 'INPUT' && activeTag !== 'TEXTAREA') {
+        const wrapper = document.getElementById('table-scroll-wrapper');
+        if (wrapper) {
+            if (event.key === 'ArrowRight') {
+                wrapper.scrollLeft += 50; // Scroll 50px right
+            } else if (event.key === 'ArrowLeft') {
+                wrapper.scrollLeft -= 50; // Scroll 50px left
+            }
         }
     }
 });
