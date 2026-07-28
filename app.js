@@ -383,10 +383,10 @@ function renderTable() {
         } else {
             // Added the subtle (hide) text link next to the Delete button
             html += `<th style="cursor: pointer; background-color: #f2f2f2;" onclick="sortTable('${column}')">
-                            <div style="display: flex; justify-content: flex-start; align-items: center; gap: 10px;">                            <span>${column}${arrow}</span>
+                        <div style="display: flex; justify-content: flex-start; align-items: center; gap: 10px;">                            
+                            <span>${column}${arrow}</span>
                             <div>
                                 <button onclick="event.stopPropagation(); hideColumn('${column}')" title="Hide Column" style="color: #6c757d; background: none; border: none; cursor: pointer; font-size: 12px; margin-left: 10px; padding: 0;">(hide)</button>
-                                <button onclick="event.stopPropagation(); promptDeleteColumn('${column}')" title="Delete Column" style="color: #dc3545; background: none; border: none; cursor: pointer; font-size: 14px; font-weight: bold; margin-left: 5px;">✖</button>
                             </div>
                         </div>
                      </th>`;
@@ -406,6 +406,9 @@ function renderTable() {
 
         visibleColumns.forEach(column => {
             let cellData = row[column] !== null ? row[column] : '';
+            if (typeof cellData === 'string' && cellData.includes('T00:00:00')) {
+                cellData = cellData.split('T')[0]; // Turns '1948-12-08T00:00:00' into '1948-12-08'
+            }
             let cellStr = cellData.toString().trim();
             let isBase64Image = cellStr.startsWith('/9j/') || 
                             cellStr.startsWith('iVBORw') || 
@@ -512,13 +515,13 @@ function renderTable() {
     html += '</table></div>';
 
     // pagination control
-    let paginationHtml = ''; // Create a variable to hold the HTML
+    let paginationHtml = ''; 
     if (totalPages > 1) {
-        paginationHtml= `
+        paginationHtml = `
         <div style="margin-top: 15px; display: flex; align-items: center; gap: 15px; font-family: sans-serif;">
-        <button onclick="changePage(-1)" ${currentPage === 1 ? 'disabled' : ''} style="padding: 5px 15px; cursor: pointer;">Previous</button>
-        <span style="font-weight: bold;">Page ${currentPage} of ${totalPages}</span>
-        <button onclick="changePage(1)" ${currentPage === totalPages ? 'disabled' : ''} style="padding: 5px 15px; cursor: pointer;">Next</button>
+            <button onclick="changePage(-1)" ${currentPage === 1 ? 'disabled' : ''} class="btn btn-secondary" style="${currentPage === 1 ? 'opacity: 0.5; cursor: not-allowed;' : ''}">Previous</button>
+            <span style="font-weight: bold; font-size: 14px;">Page ${currentPage} of ${totalPages}</span>
+            <button onclick="changePage(1)" ${currentPage === totalPages ? 'disabled' : ''} class="btn btn-secondary" style="${currentPage === totalPages ? 'opacity: 0.5; cursor: not-allowed;' : ''}">Next</button>
         </div>
         `;
         html += paginationHtml;
@@ -549,14 +552,11 @@ function renderTable() {
             <h2>Data for: ${ActiveTableName} <span style="font-size: 14px; color: gray; font-weight: normal;">(${globalTableData.length} total records)</span></h2>
             <div style="display: flex; align-items: center;">
                 ${hiddenDropdownHtml}
-                <!-- NEW RENAME COLUMN BUTTON -->
-                <button onclick="showRenameColumnModal()" style="margin-right: 10px; padding: 8px 15px; background-color: #f8f9fa; color: #333; border: 1px solid #ccc; border-radius: 4px; cursor: pointer; font-weight: bold; transition: background 0.2s;" onmouseover="this.style.backgroundColor='#e2e6ea'" onmouseout="this.style.backgroundColor='#f8f9fa'">
-                    ✏️ Rename Column
+                <!-- The new consolidated button -->
+                <button onclick="showManageColumnsModal()" class="btn btn-secondary" style="margin-right: 10px; background-color: #6c757d; color: white;">
+                    🛠️ Manage Columns
                 </button>
-                <button onclick="showAddColumnModal()" style="margin-right: 10px; padding: 8px 15px; background-color: #f8f9fa; color: #333; border: 1px solid #ccc; border-radius: 4px; cursor: pointer; font-weight: bold; transition: background 0.2s;" onmouseover="this.style.backgroundColor='#e2e6ea'" onmouseout="this.style.backgroundColor='#f8f9fa'">
-                    ⚙️ Add Column
-                </button>
-                <button onclick="showAddRowModal()" style="padding: 8px 15px; background-color: #28a745; color: white; border: none; border-radius: 4px; cursor: pointer; font-weight: bold; transition: background 0.2s;" onmouseover="this.style.backgroundColor='#218838'" onmouseout="this.style.backgroundColor='#28a745'">
+                <button onclick="showAddRowModal()" class="btn btn-success">
                     + Add Row
                 </button>
             </div>
@@ -1897,6 +1897,109 @@ async function executeRenameColumnFromModal() {
             
             // Reload table to show new headers
             loadTableData(ActiveTableName);
+        } else {
+            const err = await response.json();
+            errorDiv.innerText = err.error || "Failed to rename column.";
+        }
+    } catch (err) {
+        errorDiv.innerText = `Network Error: ${err.message}`;
+    }
+}
+// 1. The Main Hub Modal
+function showManageColumnsModal() {
+    const overlay = document.createElement('div');
+    overlay.id = 'manageColsOverlay';
+    overlay.style.cssText = 'position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.7); display: flex; justify-content: center; align-items: center; z-index: 1000;';
+
+    const modal = document.createElement('div');
+    modal.style.cssText = 'background: white; padding: 25px; border-radius: 8px; width: 550px; font-family: sans-serif; box-shadow: 0 4px 15px rgba(0,0,0,0.3); border-top: 5px solid #17a2b8; display: flex; flex-direction: column; max-height: 80vh;';
+
+    let colsHtml = '<div style="flex: 1; overflow-y: auto; margin-bottom: 20px; border: 1px solid #eee; border-radius: 4px;"><table style="width: 100%; border-collapse: collapse;">';
+    
+    currentColumns.forEach(col => {
+        const isId = col.toLowerCase() === 'id';
+        colsHtml += `
+            <tr>
+                <td style="padding: 12px; border-bottom: 1px solid #eee; font-weight: ${isId ? 'bold' : 'normal'};">
+                    ${col} ${isId ? '<span style="color: gray; font-size: 12px; margin-left: 10px;">(Primary Key)</span>' : ''}
+                </td>
+                <td style="padding: 12px; border-bottom: 1px solid #eee; text-align: right;">
+                    ${!isId ? `
+                        <button onclick="document.getElementById('manageColsOverlay').remove(); openRenameSpecificColumn('${col}')" class="btn btn-secondary" style="padding: 4px 10px; font-size: 12px; margin-right: 5px; background-color: #6c757d; color: white;">✏️ Rename</button>
+                        <button onclick="document.getElementById('manageColsOverlay').remove(); promptDeleteColumn('${col}')" class="btn btn-danger" style="padding: 4px 10px; font-size: 12px;">🗑️ Delete</button>
+                    ` : '<span style="color: gray; font-size: 12px; font-style: italic;">System Locked</span>'}
+                </td>
+            </tr>
+        `;
+    });
+    
+    colsHtml += '</table></div>';
+
+    modal.innerHTML = `
+        <h3 style="margin-top: 0; color: #17a2b8;">Manage Columns: ${ActiveTableName}</h3>
+        ${colsHtml}
+        <div style="display: flex; justify-content: space-between; align-items: center; border-top: 1px solid #eee; padding-top: 15px;">
+            <!-- Reuses your exact Add Column Modal! -->
+            <button onclick="document.getElementById('manageColsOverlay').remove(); showAddColumnModal()" class="btn btn-success">➕ Add New Column</button>
+            <button onclick="document.getElementById('manageColsOverlay').remove()" class="btn btn-secondary">Close</button>
+        </div>
+    `;
+    
+    overlay.appendChild(modal);
+    document.body.appendChild(overlay);
+}
+
+// 2. The Clean Rename Popup
+function openRenameSpecificColumn(oldColumnName) {
+    const overlay = document.createElement('div');
+    overlay.id = 'renameSingleColOverlay';
+    overlay.style.cssText = 'position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.7); display: flex; justify-content: center; align-items: center; z-index: 1050;';
+
+    const modal = document.createElement('div');
+    modal.style.cssText = 'background: white; padding: 25px; border-radius: 8px; width: 400px; font-family: sans-serif; box-shadow: 0 4px 15px rgba(0,0,0,0.3); border-top: 5px solid #007bff;';
+
+    modal.innerHTML = `
+        <h3 style="margin-top: 0; color: #007bff;">Rename Column: ${oldColumnName}</h3>
+        
+        <div style="margin-bottom: 20px;">
+            <label style="display: block; margin-bottom: 5px; font-weight: bold; font-size: 14px;">New Column Name:</label>
+            <input type="text" id="renameSingleColNewName" placeholder="Enter new name..." style="width: 100%; padding: 8px; box-sizing: border-box; border: 1px solid #ccc; border-radius: 4px;" autocomplete="off" />
+        </div>
+        
+        <div id="colSingleRenameErrors" style="color: red; margin-bottom: 10px; font-size: 13px; font-weight: bold;"></div>
+        
+        <div style="display: flex; justify-content: flex-end; gap: 10px;">
+            <button onclick="document.getElementById('renameSingleColOverlay').remove(); showManageColumnsModal();" class="btn btn-secondary">Cancel</button>
+            <button onclick="executeSingleRename('${oldColumnName}')" class="btn btn-primary">Rename</button>
+        </div>
+    `;
+    
+    overlay.appendChild(modal);
+    document.body.appendChild(overlay);
+    document.getElementById('renameSingleColNewName').focus();
+}
+
+// 3. The Rename Execution
+async function executeSingleRename(oldColumnName) {
+    const newName = document.getElementById('renameSingleColNewName').value.trim();
+    const errorDiv = document.getElementById('colSingleRenameErrors');
+
+    if (!newName) { errorDiv.innerText = "Please enter a new column name."; return; }
+    if (newName === oldColumnName) { document.getElementById('renameSingleColOverlay').remove(); showManageColumnsModal(); return; }
+
+    try {
+        const response = await fetch(`${apiURL}/${ActiveTableName}/column/${oldColumnName}/rename?dbName=${currentDatabase}`, {
+            method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ newName: newName })
+        });
+
+        if (response.ok) {
+            undoStack.push({ action: "RENAME_COLUMN", tableName: ActiveTableName, oldName: oldColumnName, newName: newName });
+            redoStack = [];
+            document.getElementById('renameSingleColOverlay').remove();
+            
+            // Reload the table and reopen the manager so they can keep working
+            await loadTableData(ActiveTableName);
+            showManageColumnsModal();
         } else {
             const err = await response.json();
             errorDiv.innerText = err.error || "Failed to rename column.";

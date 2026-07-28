@@ -16,13 +16,15 @@
         /* Collapsed state */
         #sidebar.collapsed {
             margin-left: -290px; /* 250px width + 40px total padding left/right */
-        }#sidebar h3 { margin-top: 0; border-bottom: 1px solid #34495e; padding-bottom: 10px; }
+        }
+        #sidebar h3 { margin-top: 0; border-bottom: 1px solid #34495e; padding-bottom: 10px; }
         .db-btn { background: #34495e; color: white; border: none; padding: 10px; text-align: left; cursor: pointer; border-radius: 4px; width: 100%; }
         .db-btn:hover { background: #1abc9c; }
         .db-btn.active { background: #1abc9c; font-weight: bold; }
         #upload-section { margin-top: auto; border-top: 1px solid #34495e; padding-top: 15px; }
         #main-content { flex: 1; padding: 20px 20px 20px 60px; background: #ecf0f1; overflow-y: auto; }
         .hidden { display: none; }
+        
         /* --- UI Button & Toolbar Styles --- */
         .btn { 
             padding: 8px 15px; border-radius: 4px; border: none; cursor: pointer; 
@@ -32,12 +34,11 @@
         .btn:hover { transform: translateY(-1px); box-shadow: 0 3px 6px rgba(0,0,0,0.15); filter: brightness(1.1); }
         .btn:active { transform: translateY(0); box-shadow: none; filter: brightness(0.9); }
         
-        /* Button Colors */
+        /* Button Colors Standardized */
         .btn-primary { background-color: #007bff; color: white; }
         .btn-secondary { background-color: #6c757d; color: white; }
-        .btn-info { background-color: #17a2b8; color: white; }
         .btn-danger { background-color: #dc3545; color: white; }
-        .btn-dark { background-color: #343a40; color: white; }
+        .btn-success { background-color: #28a745; color: white; }
 
         /* Toolbar Layout */
         .toolbar { 
@@ -49,28 +50,41 @@
         
         /* Form Inputs */
         .form-control { padding: 7px 10px; border: 1px solid #ccc; border-radius: 4px; font-size: 13px; }
-    /* --- Data Grid Optimization --- */
         
-        
+        /* --- Data Grid Optimization --- */
         #data-container table {
-            width: max-content; /* Hugs the data tightly, preventing empty stretching */
+            width: max-content;
             border-collapse: collapse;
-            white-space: nowrap; /* Forces all data to stay on a single line */
+            white-space: nowrap; 
             background-color: white;
-            box-shadow: 0 1px 3px rgba(0,0,0,0.1); /* Adds a subtle, professional shadow */
+            box-shadow: 0 1px 3px rgba(0,0,0,0.1);
         }
         
         #data-container th, #data-container td {
-            max-width: 250px; /* Prevents long text from ruining the table layout */
+            max-width: 250px;
             overflow: hidden;
-            text-overflow: ellipsis; /* Adds '...' if the text is longer than 250px */
+            text-overflow: ellipsis;
             padding: 8px 12px;
             border: 1px solid #e0e0e0;
         }
+
+        /* --- Zebra Striping & Hover Effects --- */
+        #data-container table tbody tr:nth-child(even) {
+            background-color: #f8f9fa;
+        }
+        #data-container table tbody tr:hover {
+            background-color: #e2e6ea;
+            transition: background-color 0.1s ease;
+        }
+        #data-container table tbody td:hover {
+            background-color: #d1ecf1;
+            cursor: cell;
+        }
+
         /* --- Schema Map Fixes --- */
         #schema-content svg {
-            max-width: none !important; /* Stops Mermaid from shrinking the map */
-            min-width: 1400px; /* Forces it to stretch out so it remains readable */
+            max-width: none !important;
+            min-width: 1400px;
             height: auto !important;
         }
     </style>
@@ -85,21 +99,20 @@
 <body>
 
     <div id="sidebar">
-        <!-- Attached Hamburger Tab -->
-        <button onclick="document.getElementById('sidebar').classList.toggle('collapsed')" style="position: absolute; left: 100%; top: 20px; width: 35px; height: 35px; background: #2c3e50; color: white; border: none; font-size: 18px; cursor: pointer; border-radius: 0 6px 6px 0; z-index: 100; display: flex; align-items: center; justify-content: center; box-shadow: 3px 2px 5px rgba(0,0,0,0.1);">
+        <!-- Attached Hamburger Tab (FIX 5: Snapped to top-right corner to look integrated) -->
+        <button onclick="document.getElementById('sidebar').classList.toggle('collapsed')" style="position: absolute; left: 100%; top: 0; width: 45px; height: 45px; background: #2c3e50; color: white; border: none; font-size: 20px; cursor: pointer; border-radius: 0 0 6px 0; z-index: 1000; display: flex; align-items: center; justify-content: center; box-shadow: 2px 2px 5px rgba(0,0,0,0.1);">
             ☰
         </button>
         <h3>Databases</h3>
         <!-- New Database Button -->
-        <button onclick="promptCreateDatabase()" style="width: 100%; background: #28a745; color: white; border: none; padding: 8px; cursor: pointer; border-radius: 4px; margin-bottom: 15px; font-weight: bold;">
+        <button onclick="promptCreateDatabase()" class="btn btn-success" style="width: 100%; padding: 8px; margin-bottom: 15px; font-weight: bold;">
             + New Database
         </button>
-        
         
         <div id="database-list">
             <!-- Dynamic databases will load here -->
         </div>
-        <button id="deleteDbBtn" onclick="deleteCurrentDatabase()" style="background: #dc3545; color: white; border: none; padding: 8px 15px; border-radius: 4px; cursor: pointer; margin-bottom: 15px; display: none;">
+        <button id="deleteDbBtn" onclick="deleteCurrentDatabase()" class="btn btn-danger" style="width: 100%; padding: 8px 15px; margin-bottom: 15px; display: none;">
             ⚠️ Delete Database
         </button>
     </div>
@@ -111,18 +124,18 @@
         </div>
 
         <div id="data-view" class="hidden">
-            <h2 id="current-db-title">Northwind Workspace</h2>
+            <h2 id="current-db-title">Workspace</h2>
             <!-- Table Creation Tools -->
             <div style="background: #e9ecef; padding: 15px; border-radius: 6px; margin-bottom: 20px; display: flex; gap: 15px; align-items: center;">
                 <div>
                     <h4 style="margin: 0 0 10px 0;">Create Empty Table</h4>
-                    <button onclick="promptCreateEmptyTable()" style="background: #28a745; color: white; border: none; padding: 8px 15px; border-radius: 4px; cursor: pointer;">+ Create Table</button>
+                    <button onclick="promptCreateEmptyTable()" class="btn btn-success">+ Create Table</button>
                 </div>
                 <div style="border-left: 2px solid #ccc; padding-left: 15px;">
                     <h4 style="margin: 0 0 10px 0;">Import CSV as Table</h4>
                     <div style="display: flex; gap: 10px;">
                         <input type="file" id="csvFile" accept=".csv" style="padding: 5px;" />
-                        <button onclick="handleCSVUpload()" style="background: #e67e22; color: white; border: none; padding: 8px 15px; cursor: pointer; border-radius: 4px;">Upload & Import</button>
+                        <button onclick="handleCSVUpload()" class="btn btn-success">Upload & Import</button>
                     </div>
                 </div>
             </div>
@@ -135,27 +148,25 @@
                     <div class="toolbar-row">
                         <div class="toolbar-group">
                             <span style="font-weight: bold; color: #444; font-size: 14px;">Active Table:</span>
-                            <!-- CHANGED: Now points to a new JS function -->
                             <select id="tableSelect" onchange="handleTableSelection(this.value)" class="form-control" style="min-width: 180px;"></select>
                         </div>
                         
                         <div class="toolbar-group">
-                            <!-- NEW: Hidden wrapper for table-specific top buttons -->
+                            <!-- Table-specific top buttons (FIX 2: Standardized Colors) -->
                             <div id="table-action-buttons" style="display: none; gap: 10px;">
                                 <button onclick="promptRenameTable()" class="btn btn-secondary">✏️ Rename Table</button>
                                 <button onclick="openRelationshipModal()" class="btn btn-secondary">🔗 Manage Relationships</button>
-                                <button onclick="openJoinViewModal()" class="btn btn-info">🧩 View Relationships</button>
+                                <button onclick="openJoinViewModal()" class="btn btn-secondary">🧩 View Relationships</button>
                                 <button onclick="deleteCurrentTable()" class="btn btn-danger">🗑️ Delete Table</button>
                             </div>
                             
-                            <!-- Always visible (only requires a Database, not a Table) -->
-                            <button onclick="openSqlModal()" class="btn btn-dark">⚙️ Custom Command</button>
-                            <button onclick="openSchemaModal()" class="btn btn-primary" style="background-color: #6f42c1; color: white;">🗺️ Schema Map</button>
-                            <button onclick="openSqlModal()" class="btn btn-dark">⚙️ Raw SQL</button>
+                            <!-- Always visible (FIX 1: Removed duplicate SQL button | FIX 2: Standardized colors) -->
+                            <button onclick="openSchemaModal()" class="btn btn-secondary">🗺️ Schema Map</button>
+                            <button onclick="openSqlModal()" class="btn btn-secondary">⚙️ Custom Command</button>
                         </div>
                     </div>
 
-                    <!-- NEW: Hidden wrapper for the entire bottom row -->
+                    <!-- Hidden wrapper for the entire bottom row -->
                     <div id="table-specific-tools" style="display: none; flex-direction: column; gap: 15px;">
                         
                         <!-- Divider Line -->
@@ -177,7 +188,7 @@
 
                             <div class="toolbar-group">
                                 <button onclick="exportToCSV('filtered')" class="btn btn-primary">⬇️ Export Current View</button>
-                                <button onclick="exportToCSV('full')" class="btn btn-secondary">⬇️ Export Entire Table</button>
+                                <button onclick="exportToCSV('full')" class="btn btn-primary">⬇️ Export Entire Table</button>
                             </div>
                         </div>
 
@@ -190,11 +201,11 @@
             </div>
         </div>
     </div>
+
     <!-- Relationship / Foreign Key Modal -->
     <div id="relationshipModal" class="modal" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.5); z-index: 1000; align-items:center; justify-content:center;">
         <div style="background:white; padding:25px; border-radius:8px; width:400px; max-width:90%;">
             <h3 style="margin-top: 0;">Create Relationship (Foreign Key)</h3>
-            
             <p style="font-size: 14px; color: #555;">Linking <b><span id="rel-current-table"></span></b> to another table.</p>
 
             <div style="margin-bottom: 15px;">
@@ -208,11 +219,12 @@
             </div>
 
             <div style="display:flex; justify-content:flex-end; gap:10px; margin-top: 20px;">
-                <button onclick="closeRelationshipModal()" style="padding: 8px 15px; cursor:pointer;">Cancel</button>
-                <button onclick="submitRelationship()" style="background:#007bff; color:white; border:none; padding:8px 15px; border-radius:4px; cursor:pointer;">Create Link</button>
+                <button onclick="closeRelationshipModal()" class="btn btn-secondary">Cancel</button>
+                <button onclick="submitRelationship()" class="btn btn-primary">Create Link</button>
             </div>
         </div>
     </div>
+
     <!-- Smart Join View Modal -->
     <div id="joinViewModal" class="modal" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.5); z-index: 1000; align-items:center; justify-content:center;">
         <div style="background:white; padding:25px; border-radius:8px; width:90%; max-width:1000px; max-height: 85vh; display: flex; flex-direction: column;">
@@ -221,11 +233,12 @@
             <p style="font-size: 14px; color: #666; margin-top: 0; margin-bottom: 15px;">Select an existing relationship to view the combined data.</p>
             
             <div style="display: flex; gap: 10px; margin-bottom: 20px; align-items: center;">
-                <select id="smart-relationship-select" style="padding:8px; flex: 1;">
-                    <!-- JavaScript will populate this with smart relationships -->
+                <select id="smart-relationship-select" class="form-control" style="flex: 1;">
+                    <!-- JavaScript will populate this -->
                 </select>
-                <button onclick="loadJoinedData()" style="background:#007bff; color:white; border:none; padding:8px 15px; border-radius:4px; cursor:pointer;">Load View</button>
+                <button onclick="loadJoinedData()" class="btn btn-primary">Load View</button>
             </div>
+            
             <div id="join-search-container" style="display: none; margin-bottom: 15px;">
                 <input type="text" id="join-search-box" oninput="renderJoinTable()" placeholder="🔍 Type here to instantly filter results..." class="form-control" style="width: 100%; box-sizing: border-box;">
             </div>
@@ -233,16 +246,13 @@
             <div id="join-results-container" style="overflow: auto; flex: 1; border: 1px solid #ddd; background: #fafafa; border-radius: 4px;">
                 <p style="padding: 15px; color: #666; text-align: center;">Select a relationship above and click Load View.</p>
             </div>
-            <div id="join-results-container" style="overflow: auto; flex: 1; border: 1px solid #ddd; background: #fafafa; border-radius: 4px;">
-                <p style="padding: 15px; color: #666; text-align: center;">Select a relationship above and click Load View.</p>
-            </div>
 
             <div style="display:flex; justify-content:flex-end; margin-top: 20px;">
-                <button onclick="closeJoinViewModal()" style="padding: 8px 15px; cursor:pointer;">Close</button>
+                <button onclick="closeJoinViewModal()" class="btn btn-secondary">Close</button>
             </div>
-            
         </div>
     </div>
+
     <!-- Raw SQL Execution Modal -->
     <div id="sqlModal" class="modal" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.5); z-index: 1000; align-items:center; justify-content:center;">
         <div style="background:white; padding:25px; border-radius:8px; width:90%; max-width:900px; display: flex; flex-direction: column;">
@@ -250,11 +260,11 @@
             <h3 style="margin-top: 0; margin-bottom: 5px;">Execute Raw SQL</h3>
             <p style="font-size: 14px; color: #dc3545; margin-top: 0; margin-bottom: 15px;"><b>Warning:</b> Commands executed here run directly against the database with no safety nets.</p>
             
-            <textarea id="sql-query-input" rows="6" style="width:100%; padding:10px; font-family: monospace; font-size: 14px; margin-bottom:15px; box-sizing: border-box; background: #f8f9fa; border: 1px solid #ccc; border-radius: 4px;" placeholder="SELECT * FROM [YourTable] WHERE Price > 100"></textarea>
+            <textarea id="sql-query-input" rows="6" style="width:100%; padding:10px; font-family: monospace; font-size: 14px; margin-bottom:15px; box-sizing: border-box; background: #f8f9fa; border: 1px solid #ccc; border-radius: 4px;" placeholder="SELECT * FROM [YourTable]"></textarea>
             
             <div style="display:flex; justify-content:flex-end; gap:10px; margin-bottom:15px;">
-                <button onclick="closeSqlModal()" style="padding: 8px 15px; cursor:pointer;">Close</button>
-                <button onclick="runRawSql()" style="background:#28a745; color:white; border:none; padding:8px 15px; border-radius:4px; cursor:pointer; font-weight: bold;">▶ Run Query</button>
+                <button onclick="closeSqlModal()" class="btn btn-secondary">Close</button>
+                <button onclick="runRawSql()" class="btn btn-success">▶ Run Query</button>
             </div>
 
             <div id="sql-results-container" style="max-height: 400px; overflow: auto; border: 1px solid #ddd; background: #fafafa; border-radius: 4px;">
@@ -263,6 +273,7 @@
             
         </div>
     </div>
+
     <!-- Schema Map Modal -->
     <div id="schemaModal" class="modal" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.8); z-index: 2000; align-items:center; justify-content:center;">
         <div style="background:white; padding:25px; border-radius:8px; width:95%; max-width:1200px; height: 90vh; display: flex; flex-direction: column; box-shadow: 0 10px 30px rgba(0,0,0,0.5);">
