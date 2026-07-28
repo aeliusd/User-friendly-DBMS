@@ -14,7 +14,7 @@ using System.Reflection;
 [assembly: System.Reflection.AssemblyCompanyAttribute("mini access api")]
 [assembly: System.Reflection.AssemblyConfigurationAttribute("Debug")]
 [assembly: System.Reflection.AssemblyFileVersionAttribute("1.0.0.0")]
-[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+a9d21a752d00541218422972c5a5b12f7cd81cd5")]
+[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+8adcd1fc4c12a33ec13733dc0d27855639ca522c")]
 [assembly: System.Reflection.AssemblyProductAttribute("mini access api")]
 [assembly: System.Reflection.AssemblyTitleAttribute("mini access api")]
 [assembly: System.Reflection.AssemblyVersionAttribute("1.0.0.0")]

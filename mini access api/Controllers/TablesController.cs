@@ -47,8 +47,7 @@ namespace mini_access_api.Controllers
             {
                 throw new ArgumentException("Invalid database name.");
             }
-            return $"Server=.\\SQLEXPRESS;Database={databaseName};Trusted_Connection=True;TrustServerCertificate=True;";
-        }
+            return $"Server=localhost;Database={databaseName};Trusted_Connection=True;TrustServerCertificate=True;";        }
         [HttpPost("create-database")]
         public async Task<IActionResult> CreateDatabase([FromQuery] string dbName)
         {
@@ -857,6 +856,92 @@ namespace mini_access_api.Controllers
             catch (SqlException ex)
             {
                 return BadRequest(new { error = ex.Message });
+            }
+        }
+        [HttpPut("{tableName}/rename")]
+        public async Task<IActionResult> RenameTable([FromQuery] string dbName, string tableName, [FromBody] Dictionary<string, string> payload)
+        {
+            try
+            {
+                if (!payload.ContainsKey("newName")) return BadRequest(new { error = "New name is required." });
+
+                string newName = payload["newName"].Trim();
+
+                if (!IsValidIdentifier(dbName) || !IsValidIdentifier(tableName) || !IsValidIdentifier(newName))
+                {
+                    return BadRequest(new { error = "Invalid naming format. Use alphanumeric characters only." });
+                }
+
+                // EXEC sp_rename 'OldName', 'NewName'
+                string query = $"EXEC sp_rename '[{tableName}]', '{newName}'";
+
+                using (var connection = new SqlConnection(GetConnectionString(dbName)))
+                {
+                    await connection.OpenAsync();
+                    using (var command = new SqlCommand(query, connection))
+                    {
+                        await command.ExecuteNonQueryAsync();
+                        return Ok(new { message = $"Table renamed to '{newName}' successfully.", newName = newName });
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                return BadRequest(new { error = $"Database error: {ex.Message}" });
+            }
+        }
+
+        [HttpPut("{tableName}/column/{columnName}/rename")]
+        public async Task<IActionResult> RenameColumn([FromQuery] string dbName, string tableName, string columnName, [FromBody] Dictionary<string, string> payload)
+        {
+            try
+            {
+                if (!payload.ContainsKey("newName")) return BadRequest(new { error = "New name is required." });
+                string newName = payload["newName"].Trim();
+
+                if (!IsValidIdentifier(dbName) || !IsValidIdentifier(tableName) ||
+                    !IsValidIdentifier(columnName) || !IsValidIdentifier(newName))
+                {
+                    return BadRequest(new { error = "Invalid naming format. Use alphanumeric characters only." });
+                }
+
+                // 1. Rename the column
+                // 2. Look for any Foreign Key attached to this specific column
+                // 3. If found, rename the Foreign Key constraint to match the new column name safely
+                string query = $@"
+                    -- Rename the column
+                    EXEC sp_rename '[{tableName}].[{columnName}]', '{newName}', 'COLUMN';
+
+                    -- Auto-Rename Foreign Keys
+                    DECLARE @oldFK NVARCHAR(255), @newFK NVARCHAR(255), @targetTable NVARCHAR(255);
+                    
+                    SELECT @oldFK = fk.name, @targetTable = t_target.name
+                    FROM sys.foreign_keys fk
+                    INNER JOIN sys.foreign_key_columns fkc ON fk.object_id = fkc.constraint_object_id
+                    INNER JOIN sys.tables t_target ON fkc.referenced_object_id = t_target.object_id
+                    WHERE fkc.parent_object_id = OBJECT_ID('[{tableName}]')
+                    AND fkc.parent_column_id = COLUMNPROPERTY(OBJECT_ID('[{tableName}]'), '{newName}', 'ColumnId');
+
+                    IF @oldFK IS NOT NULL
+                    BEGIN
+                        SET @newFK = 'FK_' + '{tableName}' + '_' + '{newName}' + '_' + @targetTable;
+                        EXEC sp_rename @oldFK, @newFK, 'OBJECT';
+                    END
+                ";
+
+                using (var connection = new SqlConnection(GetConnectionString(dbName)))
+                {
+                    await connection.OpenAsync();
+                    using (var command = new SqlCommand(query, connection))
+                    {
+                        await command.ExecuteNonQueryAsync();
+                        return Ok(new { message = $"Column renamed to '{newName}' successfully." });
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                return BadRequest(new { error = $"Database error: {ex.Message}" });
             }
         }
         [HttpGet("{tableName}")]

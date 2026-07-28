@@ -14,6 +14,7 @@ let undoStack = [];
 let redoStack = [];
 
 let hiddenColumns = [];
+let currentTableFKs = [];
 function hideColumn(columnName) {
     if (!hiddenColumns.includes(columnName)) {
         hiddenColumns.push(columnName);
@@ -301,6 +302,17 @@ async function loadTableData(tableName, searchQuery = '', isExactMatch = false, 
 
         globalTableData = rows; // Store the fetched data globally
         currentPage = 1; // Reset to the first page whenever new data is loaded
+        //silently fetch relationships
+        try {
+            const fkRes = await fetch(`${apiURL}/foreign-keys?dbName=${currentDatabase}&tableName=${tableName}`);
+            if (fkRes.ok) {
+                currentTableFKs = await fkRes.json();
+            } else {
+                currentTableFKs = [];
+            }
+        } catch(e) {
+            currentTableFKs = [];
+        }
         if(currentSortColumn != '') {
             applyCurrentSort(); // Reapply the current sort if a column was previously sorted
         } else {
@@ -537,6 +549,10 @@ function renderTable() {
             <h2>Data for: ${ActiveTableName} <span style="font-size: 14px; color: gray; font-weight: normal;">(${globalTableData.length} total records)</span></h2>
             <div style="display: flex; align-items: center;">
                 ${hiddenDropdownHtml}
+                <!-- NEW RENAME COLUMN BUTTON -->
+                <button onclick="showRenameColumnModal()" style="margin-right: 10px; padding: 8px 15px; background-color: #f8f9fa; color: #333; border: 1px solid #ccc; border-radius: 4px; cursor: pointer; font-weight: bold; transition: background 0.2s;" onmouseover="this.style.backgroundColor='#e2e6ea'" onmouseout="this.style.backgroundColor='#f8f9fa'">
+                    ✏️ Rename Column
+                </button>
                 <button onclick="showAddColumnModal()" style="margin-right: 10px; padding: 8px 15px; background-color: #f8f9fa; color: #333; border: 1px solid #ccc; border-radius: 4px; cursor: pointer; font-weight: bold; transition: background 0.2s;" onmouseover="this.style.backgroundColor='#e2e6ea'" onmouseout="this.style.backgroundColor='#f8f9fa'">
                     ⚙️ Add Column
                 </button>
@@ -603,43 +619,96 @@ function changePage(direction) {
 }
 
 // Inline helper functions
-function makeCellEditable(td, tableName, columnName, pkName, pkValue, originalValue) {
-    if (td.querySelector('input')) return;
-    let inputType = 'text';
-    if (!isNaN(originalValue) && originalValue !== '') inputType = "number";
+async function makeCellEditable(td, tableName, columnName, pkName, pkValue, originalValue) {
+    if (td.querySelector('input') || td.querySelector('select')) return;
     
-    // Create the input element
-    const input = document.createElement('input');
-    input.type = inputType;
-    input.value = originalValue;
-    input.style.width = "100%";
-    input.style.boxSizing = "border-box";
-
-    // Clear the current cell content (including links/images) and insert the input
-    td.innerHTML = '';
-    td.appendChild(input);
-    input.focus();
-
-    // Save changes on Enter key, cancel on Escape key
-    input.onkeydown = async function(e) {
-        if (e.key === 'Enter') {
-            const newValue = input.value;
-            if (newValue === originalValue) {
-                // No change made, just reload table to restore original formatting
-                renderTable(); 
-                return;
-            }
+    // 1. Check if this column is a Foreign Key
+    const fkInfo = currentTableFKs.find(fk => fk.LocalColumn === columnName);
+    
+    if (fkInfo) {
+        // --- IT IS A FOREIGN KEY: BUILD A DROPDOWN ---
+        td.innerHTML = '<span style="color: gray; font-size: 12px;">Loading...</span>';
+        
+        try {
+            // Fetch the data from the linked table (e.g., Suppliers)
+            const targetRes = await fetch(`${apiURL}/${fkInfo.TargetTable}?dbName=${currentDatabase}`);
+            const targetData = await targetRes.json();
             
-            await saveCellUpdate(tableName, columnName, pkName, pkValue, newValue, td, originalValue);
-        } else if (e.key === 'Escape') {
-             // Cancel editing, reload table to restore original formatting
-            renderTable();
+            const select = document.createElement('select');
+            select.style.width = "100%";
+            select.style.padding = "4px";
+            select.style.boxSizing = "border-box";
+            
+            // Add a blank default option
+            select.appendChild(new Option('-- Select --', ''));
+            
+            // Generate the options
+            targetData.forEach(row => {
+                const targetId = row[fkInfo.TargetColumn];
+                let displayVal = targetId;
+                
+                // SMART DISPLAY: Try to find a text column for the name (ignores IDs)
+                const keys = Object.keys(row);
+                for(let k of keys) {
+                    if(k !== fkInfo.TargetColumn && typeof row[k] === 'string' && !k.toLowerCase().includes('id')) {
+                        displayVal = `${row[k]} (ID: ${targetId})`;
+                        break;
+                    }
+                }
+                
+                const opt = new Option(displayVal, targetId);
+                if (String(targetId) === String(originalValue)) opt.selected = true; // Select current value
+                select.appendChild(opt);
+            });
+            
+            td.innerHTML = '';
+            td.appendChild(select);
+            select.focus();
+            
+            // Save immediately when they pick a new dropdown option
+            select.onchange = async function() {
+                const newValue = select.value;
+                if (newValue === originalValue) { renderTable(); return; }
+                await saveCellUpdate(tableName, columnName, pkName, pkValue, newValue, td, originalValue);
+            };
+            
+            // Cancel on Escape or clicking away
+            select.onkeydown = function(e) { if (e.key === 'Escape') renderTable(); };
+            select.onblur = function() { renderTable(); };
+            
+        } catch(e) {
+            console.error("Failed to load dropdown data:", e);
+            renderTable(); // Abort safely
         }
-    };
-    // Revert back if user clicks outside the input box without pressing enter
-    input.onblur = function() {
-        renderTable(); 
-    };
+    } else {
+        // --- NORMAL COLUMN: USE EXISTING INPUT BOX ---
+        let inputType = 'text';
+        if (!isNaN(originalValue) && originalValue !== '') inputType = "number";
+        
+        const input = document.createElement('input');
+        input.type = inputType;
+        input.value = originalValue;
+        input.style.width = "100%";
+        input.style.boxSizing = "border-box";
+
+        td.innerHTML = '';
+        td.appendChild(input);
+        input.focus();
+
+        input.onkeydown = async function(e) {
+            if (e.key === 'Enter') {
+                const newValue = input.value;
+                if (newValue === originalValue) {
+                    renderTable(); 
+                    return;
+                }
+                await saveCellUpdate(tableName, columnName, pkName, pkValue, newValue, td, originalValue);
+            } else if (e.key === 'Escape') {
+                renderTable();
+            }
+        };
+        input.onblur = function() { renderTable(); };
+    }
 }
 async function saveCellUpdate(tableName, columnName, pkName, pkValue, newValue, td, originalValue) {
     try {
@@ -969,6 +1038,29 @@ async function undoLastAction() {
         } catch (err) {
             console.error("Failed to undo create:", err);
         }
+    } else if (lastAction.action === "RENAME_TABLE") {
+        try {
+            // Rename from newName BACK to oldName
+            await fetch(`${apiURL}/${lastAction.newName}/rename?dbName=${currentDatabase}`, {
+                method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ newName: lastAction.oldName })
+            });
+            
+            redoStack.push(lastAction);
+            await loadTablesForWorkspace(currentDatabase);
+            document.getElementById('tableSelect').value = lastAction.oldName;
+            handleTableSelection(lastAction.oldName);
+        } catch (err) { console.error("Undo table rename failed", err); }
+    }
+    else if (lastAction.action === "RENAME_COLUMN") {
+        try {
+            // Rename from newName BACK to oldName
+            await fetch(`${apiURL}/${lastAction.tableName}/column/${lastAction.newName}/rename?dbName=${currentDatabase}`, {
+                method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ newName: lastAction.oldName })
+            });
+            
+            redoStack.push(lastAction);
+            loadTableData(lastAction.tableName);
+        } catch (err) { console.error("Undo column rename failed", err); }
     }
 }
 
@@ -1048,6 +1140,29 @@ async function redoLastAction() {
                 renderTable();
             }
         } catch (err) { console.error("Failed to redo create:", err); }
+    } else if (lastAction.action === "RENAME_TABLE") {
+        try {
+            // Rename from oldName FORWARD to newName
+            await fetch(`${apiURL}/${lastAction.oldName}/rename?dbName=${currentDatabase}`, {
+                method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ newName: lastAction.newName })
+            });
+            
+            undoStack.push(lastAction);
+            await loadTablesForWorkspace(currentDatabase);
+            document.getElementById('tableSelect').value = lastAction.newName;
+            handleTableSelection(lastAction.newName);
+        } catch (err) { console.error("Redo table rename failed", err); }
+    }
+    else if (lastAction.action === "RENAME_COLUMN") {
+        try {
+            // Rename from oldName FORWARD to newName
+            await fetch(`${apiURL}/${lastAction.tableName}/column/${lastAction.oldName}/rename?dbName=${currentDatabase}`, {
+                method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ newName: lastAction.newName })
+            });
+            
+            undoStack.push(lastAction);
+            loadTableData(lastAction.tableName);
+        } catch (err) { console.error("Redo column rename failed", err); }
     }
 }
 
@@ -1678,6 +1793,116 @@ async function generateSchemaDiagram() {
     } catch (err) {
         console.error("Schema Generation Error:", err);
         container.innerHTML = '<p style="color:red; padding: 20px;">An error occurred while generating the map.</p>';
+    }
+}
+async function promptRenameTable() {
+    if (!currentDatabase || !ActiveTableName) return;
+    
+    const newName = prompt(`Rename table '${ActiveTableName}' to:`, ActiveTableName);
+    if (!newName || newName === ActiveTableName) return; 
+
+    try {
+        const response = await fetch(`${apiURL}/${ActiveTableName}/rename?dbName=${currentDatabase}`, {
+            method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ newName: newName })
+        });
+
+        if (response.ok) {
+            // Just push the action!
+            undoStack.push({ action: "RENAME_TABLE", oldName: ActiveTableName, newName: newName });
+            redoStack = [];
+            
+            await loadTablesForWorkspace(currentDatabase);
+            document.getElementById('tableSelect').value = newName;
+            handleTableSelection(newName);
+        } else {
+            const err = await response.json(); alert(`Rename Failed:\n${err.error}`);
+        }
+    } catch (err) { alert("Network error during rename."); }
+}
+
+function showRenameColumnModal() {
+    if (!currentColumns || currentColumns.length <= 1) {
+        alert("No custom columns available to rename.");
+        return;
+    }
+
+    const overlay = document.createElement('div');
+    overlay.id = 'renameColOverlay';
+    overlay.style.cssText = 'position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.7); display: flex; justify-content: center; align-items: center; z-index: 1000;';
+
+    const modal = document.createElement('div');
+    modal.style.cssText = 'background: white; padding: 25px; border-radius: 8px; width: 400px; font-family: sans-serif; box-shadow: 0 4px 15px rgba(0,0,0,0.3); border-top: 5px solid #007bff;';
+
+    // Filter out the 'Id' column so they can't accidentally break the database
+    let optionsHtml = currentColumns
+        .filter(c => c.toLowerCase() !== 'id')
+        .map(c => `<option value="${c}">${c}</option>`)
+        .join('');
+
+    modal.innerHTML = `
+        <h3 style="margin-top: 0; color: #007bff;">Rename Column</h3>
+        
+        <div style="margin-bottom: 15px;">
+            <label style="display: block; margin-bottom: 5px; font-weight: bold; font-size: 14px;">Select Column:</label>
+            <select id="renameColOldName" style="width: 100%; padding: 8px; box-sizing: border-box; border: 1px solid #ccc; border-radius: 4px;">
+                ${optionsHtml}
+            </select>
+        </div>
+
+        <div style="margin-bottom: 20px;">
+            <label style="display: block; margin-bottom: 5px; font-weight: bold; font-size: 14px;">New Column Name:</label>
+            <input type="text" id="renameColNewName" placeholder="e.g., NewName" style="width: 100%; padding: 8px; box-sizing: border-box; border: 1px solid #ccc; border-radius: 4px;" autocomplete="off" />
+        </div>
+        
+        <div id="colRenameErrors" style="color: red; margin-bottom: 10px; font-size: 13px; font-weight: bold;"></div>
+        
+        <div style="display: flex; justify-content: flex-end; gap: 10px;">
+            <button onclick="document.getElementById('renameColOverlay').remove()" style="padding: 8px 15px; cursor: pointer; background: #f8f9fa; border: 1px solid #ccc; border-radius: 4px;">Cancel</button>
+            <button onclick="executeRenameColumnFromModal()" style="padding: 8px 15px; background: #007bff; color: white; border: none; border-radius: 4px; cursor: pointer; font-weight: bold;">Rename</button>
+        </div>
+    `;
+    
+    overlay.appendChild(modal);
+    document.body.appendChild(overlay);
+    document.getElementById('renameColNewName').focus();
+}
+
+async function executeRenameColumnFromModal() {
+    const oldColumnName = document.getElementById('renameColOldName').value;
+    const newName = document.getElementById('renameColNewName').value.trim();
+    const errorDiv = document.getElementById('colRenameErrors');
+
+    if (!newName) {
+        errorDiv.innerText = "Please enter a new column name.";
+        return;
+    }
+    if (newName === oldColumnName) {
+        document.getElementById('renameColOverlay').remove();
+        return;
+    }
+
+    try {
+        const response = await fetch(`${apiURL}/${ActiveTableName}/column/${oldColumnName}/rename?dbName=${currentDatabase}`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ newName: newName })
+        });
+
+        if (response.ok) {
+            // Push action to undo stack!
+            undoStack.push({ action: "RENAME_COLUMN", tableName: ActiveTableName, oldName: oldColumnName, newName: newName });
+            redoStack = [];
+            
+            document.getElementById('renameColOverlay').remove();
+            
+            // Reload table to show new headers
+            loadTableData(ActiveTableName);
+        } else {
+            const err = await response.json();
+            errorDiv.innerText = err.error || "Failed to rename column.";
+        }
+    } catch (err) {
+        errorDiv.innerText = `Network Error: ${err.message}`;
     }
 }
 document.addEventListener('keydown', function(event) {
