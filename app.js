@@ -43,13 +43,13 @@ async function selectDatabase(dbName, clickedButton) {
 
 async function handleCSVUpload() {
     if (!currentDatabase) {
-        alert("Please select a database from the sidebar first.");
+        showToast("Please select a database from the sidebar first.");
         return;
     }
 
     const fileInput = document.getElementById('csvFile');
     if (fileInput.files.length === 0) {
-        alert('Please select a CSV file to import first.');
+        showToast('Please select a CSV file to import first.');
         return;
     }
     const tableName = prompt("What should we name this new table?");
@@ -71,7 +71,7 @@ async function handleCSVUpload() {
         });
         
         if (response.ok) {
-            alert(`Table '${tableName}' imported successfully!`);
+            showToast(`Table '${tableName}' imported successfully!`);
             fileInput.value = "";
             loadTablesForWorkspace(currentDatabase); // Refresh the dropdown
         } else {
@@ -89,7 +89,7 @@ async function handleCSVUpload() {
 //Export to CSV function
 async function exportToCSV(exportType) {
     if(!ActiveTableName) {
-        alert("Please select a table first!");
+        showToast("Please select a table first!");
         return;
     }
     let dataToExport = [];
@@ -98,7 +98,7 @@ async function exportToCSV(exportType) {
     {
         if(!globalTableData || globalTableData.length === 0)
         {
-            alert("No data currently available to export");
+            showToast("No data currently available to export");
             return;
         }
         dataToExport = globalTableData;
@@ -113,7 +113,7 @@ async function exportToCSV(exportType) {
         }
         catch(err) {
             console.error(err);
-            alert ("Could not load the full table for export");
+            showToast ("Could not load the full table for export");
             return;
         }
 
@@ -129,7 +129,7 @@ async function exportToCSV(exportType) {
     });
 
     if (activeData.length === 0) {
-        alert("No active data to export!");
+        showToast("No active data to export!");
         return;
     }
     let csvContent = exportColumns.join(",") + "\n";
@@ -162,7 +162,7 @@ async function promptCreateDatabase() {
     try {
         const response = await fetch(`${apiURL}/create-database?dbName=${dbName}`, { method: 'POST' });
         if (response.ok) {
-            alert(`Database '${dbName}' created successfully!`);
+            showToast(`Database '${dbName}' created successfully!`);
             loadWorkspacesOnBoot(); // Refresh the sidebar to show the new DB
         } else {
             const err = await response.json();
@@ -174,7 +174,7 @@ async function promptCreateDatabase() {
 }
 async function promptCreateEmptyTable() {
     if (!currentDatabase) {
-        alert("Please select a database from the sidebar first!");
+        showToast("Please select a database from the sidebar first!");
         return;
     }
     const tableName = prompt("Enter new table name (alphanumeric and underscores only):");
@@ -183,7 +183,7 @@ async function promptCreateEmptyTable() {
     try {
         const response = await fetch(`${apiURL}/create-table?dbName=${currentDatabase}&tableName=${tableName}`, { method: 'POST' });
         if (response.ok) {
-            alert(`Table '${tableName}' created successfully!`);
+            showToast(`Table '${tableName}' created successfully!`);
             loadTablesForWorkspace(currentDatabase); // Refresh the dropdown to show the new table
         } else {
             const err = await response.json();
@@ -345,7 +345,7 @@ function populateDropdown() {
 // Execute search based on user input
 function executeSearch() {
     if (ActiveTableName === '') {
-        alert("Please select a table from the sidebar first!");
+        showToast("Please select a table from the sidebar first!");
         return;
     }
     const text = document.getElementById('search-box').value;
@@ -744,7 +744,7 @@ async function saveCellUpdate(tableName, columnName, pkName, pkValue, newValue, 
                     oldValue: originalValue,
                     newValue: newValue
                 });
-
+                syncBrowserHistory();
                 rowToUpdate[columnName] = newValue;
             }
             // Re-render to apply the normal HTML formatting (links, truncation, etc)
@@ -785,7 +785,7 @@ async function deleteRow(pkValue, pkName) {
                 pkName: pkName,
                 rowId: pkValue
             });
-
+            syncBrowserHistory();
             // Remove it from our local RAM
             globalTableData = globalTableData.filter(r => String(r[pkName]) !== String(pkValue));
             renderTable();
@@ -935,7 +935,7 @@ async function submitNewRow() {
                 rowId: data.newId,
                 rowData: uiMemoryRow 
             });
-
+            syncBrowserHistory();
             // Draw the table and destroy the popup
             renderTable(); 
             document.getElementById('addRowOverlay').remove();
@@ -953,12 +953,12 @@ async function submitNewRow() {
 //Command pattern undo
 async function undoLastAction() {
     if (undoStack.length === 0) {
-        console.log("Nothing to undo!");
+        showToast("Nothing to undo!");
         return;
     }
 
     const lastAction = undoStack.pop();
-    console.log("Undoing action:", lastAction);
+    showToast(`↩️ Undid ${lastAction.action.toLowerCase()} on ${lastAction.tableName}`);
 
     if (lastAction.action === "EDIT") {
         try {
@@ -1067,12 +1067,12 @@ async function undoLastAction() {
 //command pattern redo
 async function redoLastAction() {
     if (redoStack.length === 0) {
-        console.log("Nothing to redo!");
+        showToast(`Nothing to redo!`);
         return;
     }
 
     const lastAction = redoStack.pop();
-    console.log("Redoing action:", lastAction);
+    showToast(`↪️ Redid ${lastAction.action.toLowerCase()} on ${lastAction.tableName}`);
 
     if (lastAction.action === "EDIT") {
         try {
@@ -1299,7 +1299,7 @@ async function submitNewColumn(){
 async function openRelationshipModal()
 {
     if(!currentDatabase || !ActiveTableName) {
-        alert("Please select a database and open a table first!");
+        showToast("Please select a database and open a table first!");
         return;
     }
     document.getElementById('rel-current-table').innerText = ActiveTableName;
@@ -1342,7 +1342,7 @@ async function submitRelationship() {
     const localColumn = document.getElementById('rel-local-column').value;
     const targetTable = document.getElementById('rel-target-table').value;
     if (!localColumn || !targetTable) {
-        alert("Please select both a table and a column!");
+        showToast("Please select both a table and a column!");
         return;
     }
     try {
@@ -1351,7 +1351,7 @@ async function submitRelationship() {
         const response = await fetch(fetchUrl, { method: 'POST' });
         if(response.ok) {
             const result = await response.json();
-            alert(result.message);
+            showToast(result.message);
             closeRelationshipModal();
         } else {
             const errorData = await response.json();
@@ -1365,7 +1365,7 @@ async function submitRelationship() {
 // Open the Smart Join View Modal
 async function openJoinViewModal() {
     if (!currentDatabase || !ActiveTableName) {
-        alert("Please select a database and open a table first!");
+        showToast("Please select a database and open a table first!");
         return;
     }
 
@@ -1417,7 +1417,7 @@ async function loadJoinedData() {
     const container = document.getElementById('join-results-container');
 
     if (!selectedValue) {
-        alert("Please select a valid relationship first.");
+        showToast("Please select a valid relationship first.");
         return;
     }
 
@@ -1554,7 +1554,7 @@ async function deleteCurrentTable() {
         
         if (response.ok) {
             const result = await response.json();
-            alert(result.message);
+            showToast(result.message);
             document.getElementById('data-container').innerHTML = '<p style="color: gray;">Select a table from the dropdown above to view data.</p>';
             
             const dropdown = document.getElementById('tableSelect');
@@ -1587,7 +1587,7 @@ async function deleteCurrentDatabase() {
     const userInput = prompt(`WARNING: This will permanently destroy the database '${currentDatabase}' and ALL tables inside it.\n\nType the database name exactly to confirm:`);
     
     if (userInput !== currentDatabase) {
-        if (userInput !== null) alert("Database name did not match. Deletion canceled.");
+        if (userInput !== null) showToast("Database name did not match. Deletion canceled.");
         return;
     }
 
@@ -1597,7 +1597,7 @@ async function deleteCurrentDatabase() {
         
         if (response.ok) {
             const result = await response.json();
-            alert(result.message);
+            showToast(result.message);
             
             // 1. Clear internal state variables
             currentDatabase = null;
@@ -1627,7 +1627,7 @@ async function deleteCurrentDatabase() {
 }
 function openSqlModal() {
     if (!currentDatabase) {
-        alert("Please select a database first!");
+        showToast("Please select a database first!");
         return;
     }
     document.getElementById('sqlModal').style.display = 'flex';
@@ -1643,7 +1643,7 @@ async function runRawSql() {
     const container = document.getElementById('sql-results-container');
 
     if (!query) {
-        alert("Please enter a SQL query.");
+        showToast("Please enter a SQL query.");
         return;
     }
 
@@ -1729,7 +1729,7 @@ async function runRawSql() {
 
 function openSchemaModal() {
     if (!currentDatabase) {
-        alert("Please select a database first!");
+        showToast("Please select a database first!");
         return;
     }
     document.getElementById('schema-db-name').innerText = currentDatabase;
@@ -1809,6 +1809,7 @@ async function promptRenameTable() {
         if (response.ok) {
             // Just push the action!
             undoStack.push({ action: "RENAME_TABLE", oldName: ActiveTableName, newName: newName });
+            syncBrowserHistory();
             redoStack = [];
             
             await loadTablesForWorkspace(currentDatabase);
@@ -1822,7 +1823,7 @@ async function promptRenameTable() {
 
 function showRenameColumnModal() {
     if (!currentColumns || currentColumns.length <= 1) {
-        alert("No custom columns available to rename.");
+        showToast("No custom columns available to rename.");
         return;
     }
 
@@ -1891,6 +1892,7 @@ async function executeRenameColumnFromModal() {
         if (response.ok) {
             // Push action to undo stack!
             undoStack.push({ action: "RENAME_COLUMN", tableName: ActiveTableName, oldName: oldColumnName, newName: newName });
+            syncBrowserHistory();
             redoStack = [];
             
             document.getElementById('renameColOverlay').remove();
@@ -1994,6 +1996,7 @@ async function executeSingleRename(oldColumnName) {
 
         if (response.ok) {
             undoStack.push({ action: "RENAME_COLUMN", tableName: ActiveTableName, oldName: oldColumnName, newName: newName });
+            syncBrowserHistory();
             redoStack = [];
             document.getElementById('renameSingleColOverlay').remove();
             
@@ -2008,15 +2011,179 @@ async function executeSingleRename(oldColumnName) {
         errorDiv.innerText = `Network Error: ${err.message}`;
     }
 }
+document.addEventListener("DOMContentLoaded", () => {
+  const contextMenu = document.getElementById("custom-context-menu");
+  // We attach to 'data-container' because it ALWAYS exists in the HTML!
+  const tableContainer = document.getElementById("data-container"); 
+  let currentTargetCell = null;
+
+  // 1. Intercept Right-Click inside the Spreadsheet Container
+  tableContainer.addEventListener("contextmenu", (e) => {
+    // Check if the user right-clicked a table header (th) or data cell (td)
+    const cell = e.target.closest("th, td");
+    if (!cell) return;
+
+    e.preventDefault(); // Stop default browser menu
+    currentTargetCell = cell;
+
+    // Determine if it's a header or standard cell
+    const isHeader = cell.tagName.toLowerCase() === "th";
+    toggleContextualItems(isHeader);
+
+    // Position & Show the menu (with viewport collision protection)
+    positionMenu(e.clientX, e.clientY);
+    contextMenu.classList.remove("hidden");
+  });
+
+  // 2. Hide specific menu items depending on cell type (<th> vs <td>)
+  function toggleContextualItems(isHeader) {
+    const headerItems = contextMenu.querySelectorAll(".header-only");
+    const cellItems = contextMenu.querySelectorAll(".cell-only");
+
+    headerItems.forEach(item => item.style.display = isHeader ? "flex" : "none");
+    cellItems.forEach(item => item.style.display = isHeader ? "none" : "flex");
+  }
+
+  // 3. Viewport Collision Prevention
+  function positionMenu(clickX, clickY) {
+    const menuWidth = contextMenu.offsetWidth || 230;
+    const menuHeight = contextMenu.offsetHeight || 200;
+    const windowWidth = window.innerWidth;
+    const windowHeight = window.innerHeight;
+
+    const left = (clickX + menuWidth > windowWidth) ? clickX - menuWidth : clickX;
+    const top = (clickY + menuHeight > windowHeight) ? clickY - menuHeight : clickY;
+
+    contextMenu.style.left = `${left + window.scrollX}px`;
+    contextMenu.style.top = `${top + window.scrollY}px`;
+  }
+
+  // 4. Handle Menu Item Clicks
+  contextMenu.addEventListener("click", (e) => {
+    const item = e.target.closest(".menu-item");
+    if (!item || !currentTargetCell) return;
+
+    const action = item.dataset.action;
+    executeAction(action, currentTargetCell);
+    hideMenu();
+  });
+
+  // 5. Execute Action Router (wired to modals)
+  function executeAction(action, cell) {
+    // clean up column names in case they have sort arrows attached
+    let rawText = cell.innerText.replace(' ▲', '').replace(' ▼', '').replace('(PK)', '').trim();
+    // For headers that have the "(hide)" button text inside them, grab only the first word
+    const columnName = rawText.split('\n')[0].trim();
+
+    switch (action) {
+      case "copy-cell":
+        const textToCopy = cell.innerText.trim();
+        navigator.clipboard.writeText(textToCopy);
+        showToast(`Copied "${cell.innerText}" to clipboard`);
+        break;
+
+      case "insert-row-above":
+        // Triggers your existing Add Row modal!
+        showAddRowModal(); 
+        break;
+
+      case "rename-column":
+        // Triggers your existing clean column rename modal!
+        openRenameSpecificColumn(columnName);
+        break;
+
+      case "delete-column":
+        // Triggers your existing red warning modal for column deletion!
+        promptDeleteColumn(columnName);
+        break;
+
+      case "view-foreign-keys":
+        // Triggers your existing Mermaid Schema Map modal!
+        openJoinViewModal();
+        break;
+
+      case "rename-table":
+        // Triggers your existing Table Rename prompt!
+        promptRenameTable();
+        break;
+    }
+  }
+
+  // 6. Global Menu Dismissal Listeners
+  function hideMenu() {
+    contextMenu.classList.add("hidden");
+    currentTargetCell = null;
+  }
+
+  document.addEventListener("click", (e) => {
+    if (!contextMenu.contains(e.target)) hideMenu();
+  });
+
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape") hideMenu();
+  });
+
+  window.addEventListener("scroll", hideMenu, { passive: true });
+});
+let currentHistoryIndex = 0;
+
+// 1. Set the initial baseline state when the page boots
+window.addEventListener("DOMContentLoaded", () => {
+    history.replaceState({ index: 0 }, document.title, window.location.href);
+});
+
+// 2. Helper: Call this whenever an action is pushed to your undoStack!
+function syncBrowserHistory() {
+    currentHistoryIndex++;
+    history.pushState({ index: currentHistoryIndex }, document.title, window.location.href);
+}
+
+// 3. Listen for clicks on the browser's top-left Back (<-) and Forward (->) arrows
+window.addEventListener("popstate", (event) => {
+    const newIndex = (event.state && typeof event.state.index === "number") ? event.state.index : 0;
+
+    if (newIndex < currentHistoryIndex) {
+        // User clicked Browser BACK arrow
+        if (undoStack.length === 0) {
+            // No undo possible, give the user feedback
+            showToast("⚠️ Undo history was cleared by a structural schema change.");
+            console.log("[History] Back arrow clicked, but undo stack is empty.");
+        } else {
+            console.log("[Browser Navigation] Back arrow detected -> Undoing last action");
+            undoLastAction();
+        }
+    } else if (newIndex > currentHistoryIndex) {
+        // User clicked Browser FORWARD arrow
+        if (redoStack.length === 0) {
+            console.log("[History] Forward arrow clicked, but redo stack is empty.");
+            showToast("⚠️ Nothing to redo!");
+        } else {
+            console.log("[Browser Navigation] Forward arrow detected -> Redoing last action");
+            redoLastAction();
+        }
+    }
+
+    currentHistoryIndex = newIndex;
+});
 document.addEventListener('keydown', function(event) {
     // Detects Ctrl + Z (or Cmd + Z on Mac)
    if (event.ctrlKey || event.metaKey) {
         if (event.key.toLowerCase() === 'z') {
             event.preventDefault(); 
-            undoLastAction();
+            if (undoStack.length > 0) {
+                history.back();
+            } else {
+                // ADDED THIS ELSE BLOCK:
+                showToast("⚠️ Nothing to undo!");
+            }
         } else if (event.key.toLowerCase() === 'y') {
             event.preventDefault();
-            redoLastAction();
+            if (redoStack.length > 0) {
+                history.forward();
+            } else {
+                // ADDED THIS ELSE BLOCK:
+                showToast("⚠️ Nothing to redo!");
+            }
         }
     }
     // Allow Left/Right arrow keys to seamlessly scroll the table
@@ -2033,6 +2200,51 @@ document.addEventListener('keydown', function(event) {
         }
     }
 });
+
+// Real, Visual Toast Notification System
+function showToast(message) {
+  // 1. Check if our toast container exists yet; if not, create it
+  let container = document.getElementById("toast-container");
+  if (!container) {
+    container = document.createElement("div");
+    container.id = "toast-container";
+    container.style.cssText = "position: fixed; bottom: 20px; right: 20px; z-index: 99999; display: flex; flex-direction: column; gap: 10px;";
+    document.body.appendChild(container);
+  }
+
+  // 2. Create the toast element
+  const toast = document.createElement("div");
+  toast.innerText = message;
+  toast.style.cssText = `
+    background-color: #1f2937;
+    color: #ffffff;
+    padding: 12px 18px;
+    border-radius: 6px;
+    font-family: sans-serif;
+    font-size: 13px;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+    border-left: 4px solid #f59e0b;
+    opacity: 0;
+    transform: translateY(10px);
+    transition: all 0.25s ease;
+    max-width: 320px;
+  `;
+
+  container.appendChild(toast);
+
+  // 3. Trigger slide-in animation
+  requestAnimationFrame(() => {
+    toast.style.opacity = "1";
+    toast.style.transform = "translateY(0)";
+  });
+
+  // 4. Automatically slide out and remove after 3.5 seconds
+  setTimeout(() => {
+    toast.style.opacity = "0";
+    toast.style.transform = "translateY(10px)";
+    setTimeout(() => toast.remove(), 250);
+  }, 3500);
+}
 async function loadWorkspacesOnBoot() {
     try {
         const response = await fetch(`${apiURL}/databases`);

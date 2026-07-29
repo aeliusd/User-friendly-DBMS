@@ -93,6 +93,8 @@
     <link rel="icon" type="image/png" sizes="16x16" href="icons/favicon-16x16.png">
     <link rel="manifest" href="icons/site.webmanifest">
     <link rel="icon" href="icons/favicon.ico" type="image/x-icon">
+    <!-- CSS links-->
+    <link rel="stylesheet" href="css/context-menu.css" />
     <script src="https://cdn.jsdelivr.net/npm/mermaid/dist/mermaid.min.js"></script>
     <script>mermaid.initialize({ startOnLoad: false, theme: 'default' });</script>
 </head>
@@ -288,6 +290,36 @@
             </div>
             
         </div>
+    </div>
+    <!-- Custom Context Menu Container -->
+    <div id="custom-context-menu" class="context-menu hidden">
+    <ul class="menu-list">
+        <!-- Row / Cell Actions (Shown when right-clicking <td>) -->
+        <li class="menu-item cell-only" data-action="copy-cell">
+        <span>Copy Cell Value</span>
+        <kbd>Ctrl+C</kbd>
+        </li>
+        <li class="menu-item cell-only" data-action="insert-row-above">
+        <span>Insert Row Above</span>
+        </li>
+        
+        <!-- Header Actions (Shown when right-clicking <th>) -->
+        <li class="menu-item header-only" data-action="rename-column">
+        <span>Rename Column...</span>
+        </li>
+        <li class="menu-item header-only" data-action="delete-column">
+        <span class="text-danger">Delete Column</span>
+        </li>
+
+        <!-- Universal / Schema Actions -->
+        <li class="menu-divider"></li>
+        <li class="menu-item" data-action="view-foreign-keys">
+        <span>View Foreign Key Relations</span>
+        </li>
+        <li class="menu-item" data-action="rename-table">
+        <span>Rename Table...</span>
+        </li>
+    </ul>
     </div>
     <script src="app.js"></script>
 </body>
