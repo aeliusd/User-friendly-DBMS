@@ -809,26 +809,74 @@ namespace mini_access_api.Controllers
             }
         }
         [HttpPost("custom-query")]
+        private List<string> SplitSqlCommands(string rawSql)
+        {
+            var commands = new List<string>();
+            var currentCommand = new System.Text.StringBuilder();
+            bool inSingleQuote = false;
+
+            for (int i = 0; i < rawSql.Length; i++)
+            {
+                char c = rawSql[i];
+                // Handle single quotes so semicolons inside text aren't split (e.g., 'foo;bar')
+                if (c == '\'' && (i == 0 || rawSql[i - 1] != '\\'))
+                {
+                    inSingleQuote = !inSingleQuote;
+                }
+
+                if (c == ';' && !inSingleQuote)
+                {
+                    string cmd = currentCommand.ToString().Trim();
+                    if (!string.IsNullOrWhiteSpace(cmd))
+                    {
+                        commands.Add(cmd);
+                    }
+                    currentCommand.Clear();
+                }
+                else
+                {
+                    currentCommand.Append(c);
+                }
+            }
+
+            // Capture the final command if there is no trailing semicolon
+            string remaining = currentCommand.ToString().Trim();
+            if (!string.IsNullOrWhiteSpace(remaining))
+            {
+                commands.Add(remaining);
+            }
+
+            return commands;
+        }
+
+        [HttpPost("custom-query")]
         public async Task<IActionResult> ExecuteCustomQuery([FromBody] CustomQueryModel req)
         {
             if (string.IsNullOrEmpty(req.DbName) || string.IsNullOrEmpty(req.Query))
                 return BadRequest(new { error = "Database name and query are required." });
 
-            try
+            var commands = SplitSqlCommands(req.Query);
+            if (commands.Count == 0)
+                return BadRequest(new { error = "No valid SQL commands found." });
+
+            var batchResults = new List<object>();
+
+            using (var connection = new SqlConnection(GetConnectionString(req.DbName)))
             {
-                var results = new List<Dictionary<string, object>>();
-                int recordsAffected = 0;
-                bool isSelect = false;
-                using (var connection = new SqlConnection(GetConnectionString(req.DbName)))
+                await connection.OpenAsync();
+
+                for (int idx = 0; idx < commands.Count; idx++)
                 {
-                    await connection.OpenAsync();
-                    using (var command = new SqlCommand(req.Query, connection))
+                    string sql = commands[idx];
+                    try
                     {
+                        using (var command = new SqlCommand(sql, connection))
                         using (var reader = await command.ExecuteReaderAsync())
                         {
-                            if(reader.FieldCount > 0)
+                            if (reader.FieldCount > 0)
                             {
-                                isSelect = true;
+                                // Handle SELECT statements
+                                var results = new List<Dictionary<string, object>>();
                                 while (await reader.ReadAsync())
                                 {
                                     var row = new Dictionary<string, object>();
@@ -838,26 +886,46 @@ namespace mini_access_api.Controllers
                                     }
                                     results.Add(row);
                                 }
-                            } else
+
+                                batchResults.Add(new
+                                {
+                                    index = idx + 1,
+                                    command = sql,
+                                    type = "data",
+                                    data = results,
+                                    rowCount = results.Count
+                                });
+                            }
+                            else
                             {
-                                recordsAffected = reader.RecordsAffected;
+                                // Handle INSERT / UPDATE / DELETE / DDL statements
+                                int recordsAffected = reader.RecordsAffected;
+                                batchResults.Add(new
+                                {
+                                    index = idx + 1,
+                                    command = sql,
+                                    type = "message",
+                                    message = $"Command completed successfully. {recordsAffected} row(s) affected."
+                                });
                             }
                         }
                     }
-                }
-                if(isSelect)
-                {
-                    return Ok(new { type = "data", data = results });
-                } else
-                {
-                    return Ok(new { type = "message", message = $"Command completed successfully. {recordsAffected} row(s) affected." });
+                    catch (SqlException ex)
+                    {
+                        // Catch error for this specific command without stopping the whole batch
+                        batchResults.Add(new
+                        {
+                            index = idx + 1,
+                            command = sql,
+                            type = "error",
+                            error = ex.Message
+                        });
+                    }
                 }
             }
-            catch (SqlException ex)
-            {
-                return BadRequest(new { error = ex.Message });
-            }
+            return Ok(new { results = batchResults });
         }
+
         [HttpPut("{tableName}/rename")]
         public async Task<IActionResult> RenameTable([FromQuery] string dbName, string tableName, [FromBody] Dictionary<string, string> payload)
         {

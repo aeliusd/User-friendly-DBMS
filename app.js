@@ -104,19 +104,23 @@ async function exportToCSV(exportType) {
         dataToExport = globalTableData;
         fileName = `${ActiveTableName}_Filtered.csv`;
     }
-    else if(exportType === 'full') {
-        try {
-            const response = await fetch(`${apiURL}/${ActiveTableName}`);
-            if(!response.ok) throw new Error("Failed to fetch full table");
-            dataToExport = await response.json();
-            fileName = `${ActiveTableName}_Full_Table.csv`;
+    else if (exportType === 'full') {
+        // --- NEW SAFETY CHECK: If it's a SQL Query View, use the in-memory data! ---
+        if (ActiveTableName.startsWith("SQL Query")) {
+            dataToExport = globalTableData;
+            fileName = `${ActiveTableName.replace(/[^a-zA-Z0-9_]/g, '_')}_Full.csv`;
+        } else {
+            try {
+                const response = await fetch(`${apiURL}/${ActiveTableName}`);
+                if (!response.ok) throw new Error("Failed to fetch full table");
+                dataToExport = await response.json();
+                fileName = `${ActiveTableName}_Full_Table.csv`;
+            } catch (err) {
+                console.error(err);
+                showToast("Could not load the full table for export");
+                return;
+            }
         }
-        catch(err) {
-            console.error(err);
-            showToast ("Could not load the full table for export");
-            return;
-        }
-
     }
     if(dataToExport.length === 0) return;
     let rawColumns = Object.keys(dataToExport[0]);
@@ -239,13 +243,20 @@ async function loadTablesForWorkspace(dbName) {
 
 // Handles showing/hiding the UI tools when a table is selected
 function handleTableSelection(tableName) {
-    if (tableName) {
-        // Show the tools and load the data
-        document.getElementById('table-action-buttons').style.display = 'flex';
+    if (tableName && customSqlViews[tableName]) {
+        // --- NEW: It's a saved SQL Query View! ---
+        loadCustomSqlView(tableName);
+    } else if (tableName) {
+        // --- EXISTING: It's a normal database table ---
+        const actionButtons = document.getElementById('table-action-buttons');
+        actionButtons.style.display = 'flex';
+        // Ensure all buttons (Rename, Relationships, Delete) are visible again
+        Array.from(actionButtons.children).forEach(btn => btn.style.display = 'inline-flex');
+
         document.getElementById('table-specific-tools').style.display = 'flex';
         loadTableData(tableName);
     } else {
-        // Hide the tools and clear the screen if they revert to "-- Select a Table --"
+        // Hide tools if "-- Select a Table --" is chosen
         ActiveTableName = '';
         document.getElementById('table-action-buttons').style.display = 'none';
         document.getElementById('table-specific-tools').style.display = 'none';
@@ -547,22 +558,28 @@ function renderTable() {
         `;
     }
 
-    container.innerHTML = `
-        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
-            <h2>Data for: ${ActiveTableName} <span style="font-size: 14px; color: gray; font-weight: normal;">(${globalTableData.length} total records)</span></h2>
-            <div style="display: flex; align-items: center;">
-                ${hiddenDropdownHtml}
-                <!-- The new consolidated button -->
-                <button onclick="showManageColumnsModal()" class="btn btn-secondary" style="margin-right: 10px; background-color: #6c757d; color: white;">
-                    🛠️ Manage Columns
-                </button>
-                <button onclick="showAddRowModal()" class="btn btn-success">
-                    + Add Row
-                </button>
+    const isSqlView = ActiveTableName.startsWith("SQL Query");
+
+        // Conditionally render Manage Columns & Add Row ONLY if it's a real table
+        const manageButtonsHtml = isSqlView ? '' : `
+            <button onclick="showManageColumnsModal()" class="btn btn-secondary" style="margin-right: 10px; background-color: #6c757d; color: white;">
+                🛠️ Manage Columns
+            </button>
+            <button onclick="showAddRowModal()" class="btn btn-success">
+                + Add Row
+            </button>
+        `;
+
+        container.innerHTML = `
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
+                <h2>Data for: ${ActiveTableName} <span style="font-size: 14px; color: gray; font-weight: normal;">(${globalTableData.length} total records)</span></h2>
+                <div style="display: flex; align-items: center;">
+                    ${hiddenDropdownHtml}
+                    ${manageButtonsHtml}
+                </div>
             </div>
-        </div>
-        ${paginationHtml} 
-    ` + html;
+            ${paginationHtml} 
+        ` + html;
 }
 // Sort table data based on the clicked column
 function sortTable(column) {
@@ -1638,12 +1655,105 @@ function closeSqlModal() {
     document.getElementById('sqlModal').style.display = 'none';
 }
 
+function switchSqlTab(selectedIndex) {
+    // 1. Hide all tab content panes
+    document.querySelectorAll('.sql-tab-pane').forEach((pane, idx) => {
+        pane.style.display = (idx === selectedIndex) ? 'block' : 'none';
+    });
+
+    // 2. Reset styling on all tab buttons
+    document.querySelectorAll('.sql-tab-btn').forEach((btn, idx) => {
+        if (idx === selectedIndex) {
+            // Active Tab Style
+            btn.style.backgroundColor = '#ffffff';
+            btn.style.borderBottomColor = '#ffffff';
+            btn.style.fontWeight = 'bold';
+            btn.style.color = '#007bff';
+        } else {
+            // Inactive Tab Style
+            btn.style.backgroundColor = '#e9ecef';
+            btn.style.borderBottomColor = '#dee2e6';
+            btn.style.fontWeight = 'normal';
+            btn.style.color = '#495057';
+        }
+    });
+}
+
+let currentSqlBatchResults = [];
+let customSqlViews = {}; // Stores { "SQL Query #1": [...data], "SQL Query #3": [...data] }
+let globalSqlQueryCounter = 0;
+function openSqlResultInWorkspace(idx) {
+    const item = currentSqlBatchResults[idx];
+    if (!item || !item.data || item.data.length === 0) {
+        showToast("⚠️ No data available to load.");
+        return;
+    }
+
+    globalSqlQueryCounter++;
+    let viewName = `SQL Query #${globalSqlQueryCounter}`;
+
+    // Bulletproof safety check: just in case someone manually renamed a table TO an upcoming number!
+    while (customSqlViews[viewName]) {
+        globalSqlQueryCounter++;
+        viewName = `SQL Query #${globalSqlQueryCounter}`;
+    }
+
+    // 2. Save the table data under our guaranteed unique sequential name
+    customSqlViews[viewName] = [...item.data];
+
+    // 3. Add an option to the #tableSelect dropdown if it isn't there yet
+    const dropdown = document.getElementById('tableSelect');
+    let optionExists = Array.from(dropdown.options).some(opt => opt.value === viewName);
+    if (!optionExists) {
+        const option = document.createElement('option');
+        option.value = viewName;
+        option.textContent = `📊 ${viewName} (${item.data.length} rows)`;
+        dropdown.appendChild(option);
+    }
+
+    // 4. Select it in the dropdown and load it into the background table
+    dropdown.value = viewName;
+    loadCustomSqlView(viewName);
+
+    // 5. Toast feedback (Modal stays OPEN!)
+    showToast(`✅ Added '${viewName}' to your Workspace dropdown!`);
+}
+
+// Helper: Loads a custom SQL view from memory into the normal table grid
+function loadCustomSqlView(viewName) {
+    const data = customSqlViews[viewName];
+    if (!data || data.length === 0) return;
+
+    ActiveTableName = viewName;
+    globalTableData = [...data];
+    currentColumns = Object.keys(data[0]);
+    currentPage = 1;
+    hiddenColumns = [];
+    currentSortColumn = '';
+
+    document.getElementById('search-box').value = '';
+    document.getElementById('exact-match-checkbox').checked = false;
+    populateDropdown();
+
+    document.getElementById('control-panel').style.display = 'block';
+
+    // Show #table-action-buttons, but ONLY reveal the "Rename Table" button (index 0)
+    const actionButtons = document.getElementById('table-action-buttons');
+    actionButtons.style.display = 'flex';
+    Array.from(actionButtons.children).forEach((btn, idx) => {
+        btn.style.display = (idx === 0) ? 'inline-flex' : 'none';
+    });
+
+    document.getElementById('table-specific-tools').style.display = 'flex';
+
+    renderTable();
+}
 async function runRawSql() {
     const query = document.getElementById('sql-query-input').value.trim();
     const container = document.getElementById('sql-results-container');
 
     if (!query) {
-        showToast("Please enter a SQL query.");
+        showToast("⚠️ Please enter a SQL query.");
         return;
     }
 
@@ -1663,18 +1773,140 @@ async function runRawSql() {
             return;
         }
 
-        // Handle Non-Query Results (UPDATE, DELETE, INSERT, CREATE, etc.)
-        if (result.type === 'message') {
-            container.innerHTML = `<div style="color:#155724; background-color:#d4edda; padding:15px; border-bottom:1px solid #c3e6cb;"><b>Success:</b> ${result.message}</div>`;
-            
-            // NEW: Silently refresh the table dropdown so new/deleted tables show up instantly!
+        const batch = result.results || (result.type ? [{ index: 1, command: query, ...result }] : []);
+        if (batch.length === 0) {
+            container.innerHTML = "<p style='padding:15px; text-align:center;'>No results returned.</p>";
+            return;
+        }
+        currentSqlBatchResults = batch; // Store for later use in "Open in Workspace"
+        // =================================================================
+        // BUILD TABBED INTERFACE
+        // =================================================================
+        
+        let tabsHtml = `<div style="display: flex; border-bottom: 1px solid #dee2e6; background: #f8f9fa; gap: 4px; padding: 8px 8px 0 8px; overflow-x: auto; position: sticky; top: 0; z-index: 10;">`;
+        let panesHtml = `<div style="padding: 15px; background: #ffffff;">`;
+
+        batch.forEach((item, idx) => {
+            const isFirst = (idx === 0);
+
+            // 1. Determine Tab Button Label & Icon
+            let tabLabel = `Result #${item.index}`;
+            let tabColor = "#495057";
+            if (item.type === 'error') {
+                tabLabel = `⚠️ Result #${item.index} (Error)`;
+                tabColor = "#dc3545";
+            } else if (item.type === 'message') {
+                tabLabel = `✅ Result #${item.index} (Message)`;
+            } else if (item.type === 'data') {
+                tabLabel = `📊 Result #${item.index} (${item.rowCount || item.data.length} rows)`;
+            }
+
+            // 2. Build Tab Button
+            const activeBg = isFirst ? '#ffffff' : '#e9ecef';
+            const activeBorderBottom = isFirst ? '#ffffff' : '#dee2e6';
+            const activeWeight = isFirst ? 'bold' : 'normal';
+            const activeColor = isFirst ? '#007bff' : tabColor;
+
+            tabsHtml += `
+            <button id="sql-tab-btn-${idx}" 
+                    class="sql-tab-btn"
+                    onclick="switchSqlTab(${idx})" 
+                    style="background-color: ${activeBg}; 
+                           border: 1px solid #dee2e6; 
+                           border-bottom: 2px solid ${activeBorderBottom}; 
+                           margin-bottom: -1px; 
+                           padding: 8px 14px; 
+                           border-radius: 6px 6px 0 0; 
+                           cursor: pointer; 
+                           font-size: 13px; 
+                           font-weight: ${activeWeight}; 
+                           color: ${activeColor}; 
+                           white-space: nowrap; 
+                           transition: all 0.15s ease;">
+                ${tabLabel}
+            </button>`;
+
+            // 3. Build Content Pane (Only the first one is visible by default)
+            const displayStyle = isFirst ? 'block' : 'none';
+            panesHtml += `
+            <div id="sql-pane-${idx}" class="sql-tab-pane" style="display: ${displayStyle};">
+                <!-- Header displaying the exact SQL command executed -->
+                <div style="background: #f1f3f5; padding: 8px 12px; border: 1px solid #e9ecef; border-radius: 4px; margin-bottom: 12px; font-family: monospace; font-size: 13px; color: #343a40; display: flex; justify-content: space-between; align-items: center;">
+                    <span><b>Command #${item.index}:</b> ${escapeHtml(item.command)}</span>
+                    <span style="font-size: 11px; color: #6c757d; text-transform: uppercase;">${item.type}</span>
+                </div>`;
+
+            // A. Error Output (NO BUTTON)
+            if (item.type === 'error') {
+                panesHtml += `
+                <div style="color: #721c24; background-color: #f8d7da; border: 1px solid #f5c6cb; border-radius: 4px; padding: 12px 15px; font-size: 13px;">
+                    <b>SQL Error:</b> ${escapeHtml(item.error)}
+                </div>`;
+            }
+            // B. Success / Mutation Output like "5 rows affected" (NO BUTTON)
+            else if (item.type === 'message') {
+                panesHtml += `
+                <div style="color: #155724; background-color: #d4edda; border: 1px solid #c3e6cb; border-radius: 4px; padding: 12px 15px; font-size: 13px;">
+                    <b>Success:</b> ${item.message}
+                </div>`;
+            }
+            // C. SELECT Data Grid Output
+            else if (item.type === 'data') {
+                const data = item.data;
+                
+                // C1. Empty SELECT query (NO BUTTON)
+                if (data.length === 0) {
+                    panesHtml += `<p style="padding: 12px 0; margin: 0; color: gray; font-style: italic; font-size: 13px;">Query executed successfully. 0 rows returned.</p>`;
+                } 
+                // C2. ACTUAL DATA TABLE (ONLY HERE DO WE SHOW THE BUTTON!)
+                else {
+                    const columns = Object.keys(data[0]);
+                    
+                    // Button is strictly rendered only when real rows exist
+                    panesHtml += `
+                    <div style="margin-bottom: 12px;">
+                        <button onclick="openSqlResultInWorkspace(${idx})" class="btn btn-primary" style="padding: 6px 14px; font-size: 13px; background-color: #007bff; color: white;">
+                            🚀 View as Normal Table
+                        </button>
+                    </div>`;
+
+                    // Table preview inside the modal tab
+                    panesHtml += '<div style="overflow-x: auto; max-height: 280px; border: 1px solid #dee2e6; border-radius: 4px;"><table style="width: 100%; border-collapse: collapse; text-align: left; font-size: 13px;"><thead><tr>';
+                    
+                    columns.forEach(col => {
+                        panesHtml += `<th style="border: 1px solid #dee2e6; padding: 8px 10px; background-color: #e9ecef; position: sticky; top: 0; z-index: 1;">${col}</th>`;
+                    });
+                    panesHtml += '</tr></thead><tbody>';
+
+                    data.forEach(row => {
+                        panesHtml += '<tr>';
+                        columns.forEach(col => {
+                            const val = row[col] !== null && row[col] !== undefined ? row[col] : '';
+                            panesHtml += `<td style="border: 1px solid #eee; padding: 8px 10px; background-color: white;">${val}</td>`;
+                        });
+                        panesHtml += '</tr>';
+                    });
+                    
+                    panesHtml += '</tbody></table></div>';
+                }
+            }
+
+            panesHtml += `</div>`; // Close pane
+        });
+
+        tabsHtml += `</div>`; // Close tab bar
+        panesHtml += `</div>`; // Close pane container
+
+        container.innerHTML = tabsHtml + panesHtml;
+
+        // Refresh sidebar tables if any data was mutated
+        const hasMutation = batch.some(r => r.type === 'message');
+        if (hasMutation) {
             try {
                 const tableResponse = await fetch(`${apiURL}/list?dbName=${currentDatabase}`);
                 if (tableResponse.ok) {
                     const tables = await tableResponse.json();
                     const dropdown = document.getElementById('tableSelect');
-                    
-                    // Remember what the user was looking at before the refresh
                     const currentSelection = dropdown.value; 
                     
                     dropdown.innerHTML = '<option value="">-- Select a Table --</option>';
@@ -1682,7 +1914,6 @@ async function runRawSql() {
                         dropdown.innerHTML += `<option value="${table}">${table}</option>`;
                     });
                     
-                    // Put their selection back if the table still exists
                     if (tables.includes(currentSelection)) {
                         dropdown.value = currentSelection;
                     }
@@ -1691,39 +1922,21 @@ async function runRawSql() {
                 console.error("Failed to silently refresh table list:", e);
             }
         }
-        // Handle SELECT Query Results
-        else if (result.type === 'data') {
-            const data = result.data;
-            if (data.length === 0) {
-                container.innerHTML = "<p style='padding:15px; text-align:center;'>Query executed successfully. 0 rows returned.</p>";
-                return;
-            }
-
-            // Dynamically generate the HTML table from the JSON keys
-            const columns = Object.keys(data[0]);
-            let html = '<table style="width:100%; border-collapse: collapse; text-align: left;"><thead><tr>';
-            
-            columns.forEach(col => {
-                html += `<th style="border: 1px solid #ccc; padding: 8px 12px; background-color: #e9ecef; position: sticky; top: 0;">${col}</th>`;
-            });
-            html += '</tr></thead><tbody>';
-
-            data.forEach(row => {
-                html += '<tr>';
-                columns.forEach(col => {
-                    const val = row[col] !== null && row[col] !== undefined ? row[col] : '';
-                    html += `<td style="border: 1px solid #eee; padding: 8px 12px; background-color: white;">${val}</td>`;
-                });
-                html += '</tr>';
-            });
-            
-            html += '</tbody></table>';
-            container.innerHTML = html;
-        }
     } catch (err) {
         console.error(err);
         container.innerHTML = "<p style='color:red; padding: 15px;'>A network error occurred while executing the query.</p>";
     }
+}
+
+// Small helper to prevent HTML injection inside code cards
+function escapeHtml(text) {
+    if (!text) return "";
+    return String(text)
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&#039;");
 }
 // --- SCHEMA VISUALIZER LOGIC ---
 
@@ -1798,16 +2011,46 @@ async function generateSchemaDiagram() {
 async function promptRenameTable() {
     if (!currentDatabase || !ActiveTableName) return;
     
-    const newName = prompt(`Rename table '${ActiveTableName}' to:`, ActiveTableName);
+    const newName = prompt(`Rename '${ActiveTableName}' to:`, ActiveTableName);
     if (!newName || newName === ActiveTableName) return; 
 
+    // =================================================================
+    // 1. IN-MEMORY SQL QUERY VIEW RENAME
+    // =================================================================
+    if (customSqlViews[ActiveTableName]) {
+        const oldName = ActiveTableName;
+
+        // A. Move data to the new key in our memory object
+        customSqlViews[newName] = customSqlViews[oldName];
+        delete customSqlViews[oldName];
+
+        // B. Update the <option> text & value in the #tableSelect dropdown
+        const dropdown = document.getElementById('tableSelect');
+        for (let i = 0; i < dropdown.options.length; i++) {
+            if (dropdown.options[i].value === oldName) {
+                dropdown.options[i].value = newName;
+                dropdown.options[i].textContent = `📊 ${newName} (${globalTableData.length} rows)`;
+                break;
+            }
+        }
+
+        // C. Update active state and refresh the header
+        ActiveTableName = newName;
+        dropdown.value = newName;
+        renderTable();
+        showToast(`✏️ Renamed view to '${newName}'`);
+        return;
+    }
+
+    // =================================================================
+    // 2. PHYSICAL SQL DATABASE TABLE RENAME
+    // =================================================================
     try {
         const response = await fetch(`${apiURL}/${ActiveTableName}/rename?dbName=${currentDatabase}`, {
             method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ newName: newName })
         });
 
         if (response.ok) {
-            // Just push the action!
             undoStack.push({ action: "RENAME_TABLE", oldName: ActiveTableName, newName: newName });
             syncBrowserHistory();
             redoStack = [];
@@ -1816,9 +2059,12 @@ async function promptRenameTable() {
             document.getElementById('tableSelect').value = newName;
             handleTableSelection(newName);
         } else {
-            const err = await response.json(); alert(`Rename Failed:\n${err.error}`);
+            const err = await response.json(); 
+            alert(`Rename Failed:\n${err.error}`);
         }
-    } catch (err) { alert("Network error during rename."); }
+    } catch (err) { 
+        alert("Network error during rename."); 
+    }
 }
 
 function showRenameColumnModal() {
@@ -2158,7 +2404,7 @@ window.addEventListener("popstate", (event) => {
             console.log("[History] Forward arrow clicked, but redo stack is empty.");
             showToast("⚠️ Nothing to redo!");
         } else {
-            console.log("[Browser Navigation] Forward arrow detected -> Redoing last action");
+            console.log("[Browser NaviFgation] Forward arrow detected -> Redoing last action");
             redoLastAction();
         }
     }
