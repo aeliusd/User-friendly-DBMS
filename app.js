@@ -218,6 +218,7 @@ async function loadTablesForWorkspace(dbName) {
         // Grab your existing HTML <select> dropdown element for tables
         const tableSelect = document.getElementById('tableSelect'); // Make sure this ID matches your HTML drop-down!
         tableSelect.innerHTML = '<option value="">-- Select a Table --</option>';
+
         tables.forEach(table => {
             const option = document.createElement('option');
             option.value = table;
@@ -253,7 +254,7 @@ async function loadTablesForWorkspace(dbName) {
         // Hide table-specific tools when loading a new workspace
         document.getElementById('table-action-buttons').style.display = 'none';
         document.getElementById('table-specific-tools').style.display = 'none';
-        await recoverSessionWorkspace();    
+        await recoverSessionWorkspace(true);    
     }
     catch(err) {
         console.error("Error loading workspace:", err);
@@ -1718,44 +1719,60 @@ function switchSqlTab(selectedIndex) {
 let currentSqlBatchResults = [];
 let customSqlViews = {}; // Stores { "SQL Query #1": [...data], "SQL Query #3": [...data] }
 let globalSqlQueryCounter = 0;
-function openSqlResultInWorkspace(idx) {
+function openSqlResultInWorkspace(idx, overrideTitle = null, showFeedback = true) {
     const item = currentSqlBatchResults[idx];
-    if (item && item.command && item.type === 'data') {
-        saveQueryToSession(`📊 SQL Query #${item.index}`, item.command, currentDatabase);
-    }
     if (!item || !item.data || item.data.length === 0) {
-        showToast("⚠️ No data available to load.");
+        if (showFeedback) showToast("⚠️ No data available to load.");
         return;
     }
 
-    globalSqlQueryCounter++;
-    let viewName = `SQL Query #${globalSqlQueryCounter}`;
-
-    // Bulletproof safety check: just in case someone manually renamed a table TO an upcoming number!
-    while (customSqlViews[viewName]) {
+    let viewName = overrideTitle;
+    if (!viewName) {
         globalSqlQueryCounter++;
         viewName = `SQL Query #${globalSqlQueryCounter}`;
+        // Safety check against collisions
+        while (customSqlViews[viewName] || document.querySelector(`#tableSelect option[value="${viewName}"]`)) {
+            globalSqlQueryCounter++;
+            viewName = `SQL Query #${globalSqlQueryCounter}`;
+        }
+    } else {
+        // Synchronize global counter if a higher numbered query is restored
+        const match = viewName.match(/#(\d+)/);
+        if (match) {
+            const num = parseInt(match[1], 10);
+            if (num > globalSqlQueryCounter) {
+                globalSqlQueryCounter = num;
+            }
+        }
     }
 
-    // 2. Save the table data under our guaranteed unique sequential name
+    // Save query to session using the exact viewName
+    if (item && item.command && item.type === 'data') {
+        saveQueryToSession(viewName, item.command, currentDatabase);
+    }
+
+    // Store data in memory
     customSqlViews[viewName] = [...item.data];
 
-    // 3. Add an option to the #tableSelect dropdown if it isn't there yet
+    // Add or select option in dropdown
     const dropdown = document.getElementById('tableSelect');
-    let optionExists = Array.from(dropdown.options).some(opt => opt.value === viewName);
-    if (!optionExists) {
-        const option = document.createElement('option');
-        option.value = viewName;
-        option.textContent = `📊 ${viewName} (${item.data.length} rows)`;
-        dropdown.appendChild(option);
+    if (dropdown) {
+        let optionExists = Array.from(dropdown.options).some(opt => opt.value === viewName);
+        if (!optionExists) {
+            const option = document.createElement('option');
+            option.value = viewName;
+            option.setAttribute('data-session-query', 'true');
+            option.textContent = `📊 ${viewName} (${item.data.length} rows)`;
+            dropdown.appendChild(option);
+        }
+        dropdown.value = viewName;
     }
 
-    // 4. Select it in the dropdown and load it into the background table
-    dropdown.value = viewName;
     loadCustomSqlView(viewName);
 
-    // 5. Toast feedback (Modal stays OPEN!)
-    showToast(`✅ Added '${viewName}' to your Workspace dropdown!`);
+    if (showFeedback) {
+        showToast(`✅ Added '${viewName}' to your Workspace dropdown!`);
+    }
 }
 
 // Helper: Loads a custom SQL view from memory into the normal table grid
@@ -1853,7 +1870,7 @@ async function runRawSql() {
                     style="background-color: ${activeBg}; 
                            border: 1px solid #dee2e6; 
                            border-bottom: 2px solid ${activeBorderBottom}; 
-                           margin-bottom: -1px; 
+                           margin-bo    ttom: -1px; 
                            padding: 8px 14px; 
                            border-radius: 6px 6px 0 0; 
                            cursor: pointer; 
@@ -2334,6 +2351,7 @@ async function openAdvancedJoinModal() {
         // Reset and add the first default condition row
         document.getElementById('join-conditions-list').innerHTML = '';
         addJoinConditionRow();
+        document.getElementById('join-type-select').onchange = updateJoinSqlPreview;
         updateJoinSqlPreview();
 
         document.getElementById('advancedJoinModal').style.display = 'flex';
@@ -2687,23 +2705,38 @@ function saveQueryToSession(title, sqlQuery, dbName) {
     }
 }
 
-function getSessionQueries() {
+function getSessionQueries(dbName) {
     const data = sessionStorage.getItem(SESSION_KEY);
-    return data ? JSON.parse(data) : [];
+    const allQueries = data ? JSON.parse(data) : [];
+    
+    // If a dbName is passed, ONLY return queries belonging to this specific workspace
+    if (dbName) {
+        return allQueries.filter(q => q.dbName === dbName);
+    }
+    return allQueries;
 }
 
 function clearSessionQueries() {
     sessionStorage.removeItem(SESSION_KEY);
 }
-async function recoverSessionWorkspace() {
-    const savedQueries = getSessionQueries();
-    if (savedQueries.length === 0) return;
+async function recoverSessionWorkspace(silent = false) {
+    const dropdown = document.getElementById('tableSelect');
+    if (!dropdown) return;
 
-    console.log(`🔄 Recovering ${savedQueries.length} queries from session after refresh...`);
-    showToast(`🔄 Restoring ${savedQueries.length} active query views from session...`);
+    // Remove only old session query options
+    const sessionOptions = dropdown.querySelectorAll('option[data-session-query="true"]');
+    sessionOptions.forEach(opt => opt.remove());
+
+    const savedQueries = getSessionQueries(currentDatabase);
+    if (savedQueries.length === 0) return;
 
     for (let i = 0; i < savedQueries.length; i++) {
         const item = savedQueries[i];
+
+        // Guard: check if already present
+        const alreadyExists = Array.from(dropdown.options).some(opt => opt.value === item.title);
+        if (alreadyExists) continue; 
+
         try {
             const response = await fetch(`${apiURL}/custom-query`, {
                 method: 'POST',
@@ -2718,8 +2751,9 @@ async function recoverSessionWorkspace() {
                 if (dataItem && dataItem.data) {
                     currentSqlBatchResults = batch;
                     const dataIndex = batch.indexOf(dataItem);
-                    // Load into workspace dropdown!
-                    openSqlResultInWorkspace(dataIndex);
+                    
+                    // Pass item.title and silent = true to avoid toasts and keep exact names/numbers
+                    openSqlResultInWorkspace(dataIndex, item.title, !silent); 
                 }
             }
         } catch (e) {
