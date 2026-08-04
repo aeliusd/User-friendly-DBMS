@@ -234,6 +234,7 @@ async function loadTablesForWorkspace(dbName) {
         // Hide table-specific tools when loading a new workspace
         document.getElementById('table-action-buttons').style.display = 'none';
         document.getElementById('table-specific-tools').style.display = 'none';
+        await recoverSessionWorkspace();    
     }
     catch(err) {
         console.error("Error loading workspace:", err);
@@ -387,13 +388,23 @@ function renderTable() {
             arrow = sortAscending ? ' ▲' : ' ▼';
         }
 
+        let headerBg = '#f8f9fa';
+        let headerTextColor = '#212529';
+        
+        if (column.startsWith('A | ')) {
+            headerBg = '#e2e3e5';       // Gray
+            headerTextColor = '#383d41';
+        } else if (column.startsWith('B | ')) {
+            headerBg = '#d1ecf1';       // Cyan
+            headerTextColor = '#0c5460';
+        }
+
         if (column === pkColumnName) {
-            html += `<th style="cursor: pointer; background-color: #f2f2f2;" onclick="sortTable('${column}')">
+            html += `<th style="cursor: pointer; background-color: ${headerBg}; color: ${headerTextColor}; border-bottom: 2px solid #ccc;" onclick="sortTable('${column}')">
                         ${column}${arrow} <br><span style="font-size: 11px; font-weight: normal;">(PK)</span>
                      </th>`;
         } else {
-            // Added the subtle (hide) text link next to the Delete button
-            html += `<th style="cursor: pointer; background-color: #f2f2f2;" onclick="sortTable('${column}')">
+            html += `<th style="cursor: pointer; background-color: ${headerBg}; color: ${headerTextColor}; border-bottom: 2px solid #ccc;" onclick="sortTable('${column}')">
                         <div style="display: flex; justify-content: flex-start; align-items: center; gap: 10px;">                            
                             <span>${column}${arrow}</span>
                             <div>
@@ -510,12 +521,18 @@ function renderTable() {
             .replace(/"/g, "&quot;") 
             .replace(/\n/g, "\\n")   
             .replace(/\r/g, "");
+
+        let cellBgStyle = '';
+            if (column.startsWith('B | ')) {
+                cellBgStyle = 'background-color: #e8f4f8;'; // Albastru glaciar subțire pentru celulele B
+            } else if (column.startsWith('A | ')) {
+                cellBgStyle = 'background-color: #ffffff;'; // Alb curat pentru celulele A
+            }
         if (!isPrimaryKey) {
-                // Adds a pointer cursor and the double-click event, passing 'this' (the TD element) and the raw data
-                html += `<td style="cursor: pointer;" ondblclick="makeCellEditable(this, '${ActiveTableName}', '${column}', '${pkColumnName}', '${row[pkColumnName]}', '${escapedRaw}')">${cellData}</td>`;
+                html += `<td style="cursor: pointer; ${cellBgStyle}" ondblclick="makeCellEditable(this, '${ActiveTableName}', '${column}', '${pkColumnName}', '${row[pkColumnName]}', '${escapedRaw}')">${cellData}</td>`;
             } else {
-                html += `<td>${cellData}</td>`;
-            }   
+                html += `<td style="${cellBgStyle}">${cellData}</td>`;
+            }
         });
 
         html += `<td style="text-align: center;">
@@ -1684,6 +1701,9 @@ let customSqlViews = {}; // Stores { "SQL Query #1": [...data], "SQL Query #3": 
 let globalSqlQueryCounter = 0;
 function openSqlResultInWorkspace(idx) {
     const item = currentSqlBatchResults[idx];
+    if (item && item.command && item.type === 'data') {
+        saveQueryToSession(`📊 SQL Query #${item.index}`, item.command, currentDatabase);
+    }
     if (!item || !item.data || item.data.length === 0) {
         showToast("⚠️ No data available to load.");
         return;
@@ -2257,6 +2277,303 @@ async function executeSingleRename(oldColumnName) {
         errorDiv.innerText = `Network Error: ${err.message}`;
     }
 }
+// VISUAL CONDITION BUILDER (ADVANCED JOINS)
+// =================================================================
+let joinColumnsCache = { A:[], B:[] }; // Stores the column names for the two tables in memory
+
+async function openAdvancedJoinModal() {
+    if (!currentDatabase || !ActiveTableName) {
+        showToast("Please select a database and table first!");
+        return;
+    }
+
+    const tableA = document.getElementById('join-table-a');
+    const tableB = document.getElementById('join-table-b');
+
+    tableA.innerHTML = '';
+    tableB.innerHTML = '<option value="">-- Select Table B --</option>';
+
+    // 1. Populate tables list
+    try {
+        const res = await fetch(`${apiURL}/list?dbName=${currentDatabase}`);
+        const tables = await res.json();
+
+        tables.forEach(t => {
+            tableA.add(new Option(t, t));
+            if (t !== ActiveTableName) tableB.add(new Option(t, t));
+        });
+
+        tableA.value = ActiveTableName;
+        await loadJoinColumns('A');
+
+        // Pick the first available Table B by default
+        if (tableB.options.length > 1) {
+            tableB.selectedIndex = 1;
+            await loadJoinColumns('B');
+        }
+
+        // Reset and add the first default condition row
+        document.getElementById('join-conditions-list').innerHTML = '';
+        addJoinConditionRow();
+        updateJoinSqlPreview();
+
+        document.getElementById('advancedJoinModal').style.display = 'flex';
+    } catch (e) {
+        console.error("Error opening Advanced Join Modal:", e);
+        showToast("Could not load database tables.");
+    }
+}
+
+function closeAdvancedJoinModal() {
+    document.getElementById('advancedJoinModal').style.display = 'none';
+}
+
+async function loadJoinColumns(side) {
+    const tableName = document.getElementById(side === 'A' ? 'join-table-a' : 'join-table-b').value;
+    if (!tableName) return;
+
+    // Update the visual table name label above the checkboxes
+    const labelEl = document.getElementById(side === 'A' ? 'join-label-a' : 'join-label-b');
+    if (labelEl) labelEl.innerText = tableName;
+
+    try {
+        const res = await fetch(`${apiURL}/${tableName}/schema?dbName=${currentDatabase}`);
+        if (res.ok) {
+            const schema = await res.json();
+            joinColumnsCache[side] = schema.map(c => c.ColumnName);
+        }
+    } catch (e) {
+        joinColumnsCache[side] = ['Id'];
+    }
+
+    // 1. Refresh condition dropdowns
+    const selector = (side === 'A') ? '.join-col-a' : '.join-col-b, .join-col-b2';
+    document.querySelectorAll(selector).forEach(select => {
+        const currentVal = select.value;
+        select.innerHTML = joinColumnsCache[side].map(c => `<option value="${c}">${c}</option>`).join('');
+        if (joinColumnsCache[side].includes(currentVal)) select.value = currentVal;
+    });
+
+    // 2. NEW: Render Checkboxes for Column Selection!
+    const chkContainer = document.getElementById(side === 'A' ? 'join-checkboxes-a' : 'join-checkboxes-b');
+    if (chkContainer) {
+        chkContainer.innerHTML = joinColumnsCache[side].map(col => `
+            <label style="font-size:12px; cursor:pointer; display:flex; align-items:center; gap:6px; color:#333; user-select:none;">
+                <input type="checkbox" class="join-chk-${side.toLowerCase()}" value="${col}" checked onchange="updateJoinSqlPreview()" />
+                <span>${col}</span>
+            </label>
+        `).join('');
+    }
+
+    updateJoinSqlPreview();
+}
+
+// Quick "All / None" toggle for the checkboxes
+function toggleJoinCheckboxes(side, checkStatus) {
+    document.querySelectorAll(`.join-chk-${side.toLowerCase()}`).forEach(chk => {
+        chk.checked = checkStatus;
+    });
+    updateJoinSqlPreview();
+}
+
+function buildJoinSqlString() {
+    const tableA = document.getElementById('join-table-a').value;
+    const tableB = document.getElementById('join-table-b').value;
+    const joinType = document.getElementById('join-type-select').value;
+
+    if (!tableA || !tableB) return "";
+
+    // 1. Collect Checked Columns and wrap them in clean aliases: [A | ColName] and [B | ColName]
+    let selectedCols = [];
+    
+    document.querySelectorAll('.join-chk-a:checked').forEach(chk => {
+        selectedCols.push(`A.[${chk.value}] AS [A | ${chk.value}]`);
+    });
+    document.querySelectorAll('.join-chk-b:checked').forEach(chk => {
+        selectedCols.push(`B.[${chk.value}] AS [B | ${chk.value}]`);
+    });
+
+    // Fallback safety: if user unchecked literally everything, use A.*, B.*
+    const selectClause = selectedCols.length > 0 ? selectedCols.join(", ") : "A.*, B.*";
+
+    let sql = `SELECT ${selectClause} \nFROM [${tableA}] A\n${joinType} [${tableB}] B ON `;
+    const rows = document.querySelectorAll('.join-condition-row');
+
+    if (rows.length === 0) return sql + "1=1";
+
+    let conditions = [];
+    rows.forEach(row => {
+        const colA = row.querySelector('.join-col-a').value;
+        const op = row.querySelector('.join-operator').value;
+        const colB = row.querySelector('.join-col-b').value;
+        const colB2 = row.querySelector('.join-col-b2').value;
+
+        if (op === 'BETWEEN') {
+            conditions.push(`A.[${colA}] BETWEEN B.[${colB}] AND B.[${colB2}]`);
+        } else {
+            conditions.push(`A.[${colA}] ${op} B.[${colB}]`);
+        }
+    });
+
+    return sql + conditions.join(" AND ");
+}
+
+function addJoinConditionRow() {
+    const container = document.getElementById('join-conditions-list');
+    const rowId = 'join-row-' + Date.now();
+
+    const colsA = joinColumnsCache.A.map(c => `<option value="${c}">${c}</option>`).join('');
+    const colsB = joinColumnsCache.B.map(c => `<option value="${c}">${c}</option>`).join('');
+
+    const rowHtml = `
+    <div id="${rowId}" class="join-condition-row" style="display:flex; gap:8px; align-items:center; background:#f8f9fa; padding:8px; border:1px solid #dee2e6; border-radius:4px;">
+        <span style="font-size:11px; font-weight:bold; color:#6c757d; width:35px;">A .</span>
+        <select class="form-control join-col-a" onchange="updateJoinSqlPreview()" style="flex:1;">${colsA}</select>
+        
+        <select class="form-control join-operator" onchange="handleOperatorChange(this); updateJoinSqlPreview()" style="width:130px; font-weight:bold; color:#007bff;">
+            <option value="=">= (Equals)</option>
+            <option value=">=">>= (Greater/Eq)</option>
+            <option value="<="><= (Less/Eq)</option>
+            <option value=">">> (Greater)</option>
+            <option value="<">< (Less)</option>
+            <option value="BETWEEN">BETWEEN (Range)</option>
+            <option value="LIKE">LIKE (Pattern)</option>
+        </select>
+
+        <span style="font-size:11px; font-weight:bold; color:#6c757d; width:35px;">B .</span>
+        <select class="form-control join-col-b" onchange="updateJoinSqlPreview()" style="flex:1;">${colsB}</select>
+
+        <!-- Hidden 2nd Column Input ONLY used when BETWEEN is selected -->
+        <span class="between-and-label" style="display:none; font-size:11px; font-weight:bold; color:#6c757d;">AND B.</span>
+        <select class="form-control join-col-b2" onchange="updateJoinSqlPreview()" style="display:none; flex:1;">${colsB}</select>
+
+        <button onclick="document.getElementById('${rowId}').remove(); updateJoinSqlPreview();" style="background:none; border:none; color:#dc3545; cursor:pointer; font-weight:bold; padding:0 6px;">✖</button>
+    </div>`;
+
+    container.insertAdjacentHTML('beforeend', rowHtml);
+    updateJoinSqlPreview();
+}
+
+// Automatically reveal the second dropdown when "BETWEEN" is chosen!
+function handleOperatorChange(operatorSelect) {
+    const row = operatorSelect.closest('.join-condition-row');
+    const isBetween = (operatorSelect.value === 'BETWEEN');
+    row.querySelector('.between-and-label').style.display = isBetween ? 'inline' : 'none';
+    row.querySelector('.join-col-b2').style.display = isBetween ? 'block' : 'none';
+}
+
+
+function updateJoinSqlPreview() {
+    const preview = document.getElementById('join-preview-box');
+    preview.innerText = buildJoinSqlString();
+}
+
+async function executeAdvancedJoin() {
+    const sqlQuery = buildJoinSqlString();
+    if (!sqlQuery) {
+        showToast("⚠️ Invalid join configuration.");
+        return;
+    }
+
+    showToast("⏳ Executing custom join query...");
+
+    try {
+        // 1. Send the generated query to your existing C# backend endpoint
+        const response = await fetch(`${apiURL}/custom-query`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ dbName: currentDatabase, query: sqlQuery })
+        });
+
+        const result = await response.json();
+
+        if (!response.ok) {
+            alert(`Join SQL Error:\n${result.error}`);
+            return;
+        }
+
+        const batch = result.results || [];
+        const dataItem = batch.find(item => item.type === 'data');
+
+        if (!dataItem || !dataItem.data || dataItem.data.length === 0) {
+            alert("The join executed successfully, but returned 0 matching records.");
+            return;
+        }
+
+        // 2. We use your existing openSqlResultInWorkspace logic to load it into the dropdown!
+        currentSqlBatchResults = batch;
+        const dataIndex = batch.indexOf(dataItem);
+        openSqlResultInWorkspace(dataIndex);
+        saveQueryToSession(`📊 Joined View (${dataItem.data.length} rows)`, sqlQuery, currentDatabase);
+        closeAdvancedJoinModal();
+        showToast(`✅ Loaded Joined Workspace (${dataItem.data.length} records)!`);
+
+    } catch (err) {
+        console.error("Advanced Join error:", err);
+        alert("A network error occurred while executing the join.");
+    }
+}
+
+
+const SESSION_KEY = 'workspace_session_queries';
+
+function saveQueryToSession(title, sqlQuery, dbName) {
+    let sessionQueries = getSessionQueries();
+    
+    // Avoid saving duplicates if they run the exact same query twice
+    const exists = sessionQueries.some(q => q.sqlQuery === sqlQuery && q.dbName === dbName);
+    if (!exists) {
+        sessionQueries.push({ title, sqlQuery, dbName });
+        sessionStorage.setItem(SESSION_KEY, JSON.stringify(sessionQueries));
+    }
+}
+
+function getSessionQueries() {
+    const data = sessionStorage.getItem(SESSION_KEY);
+    return data ? JSON.parse(data) : [];
+}
+
+function clearSessionQueries() {
+    sessionStorage.removeItem(SESSION_KEY);
+}
+async function recoverSessionWorkspace() {
+    const savedQueries = getSessionQueries();
+    if (savedQueries.length === 0) return;
+
+    console.log(`🔄 Recovering ${savedQueries.length} queries from session after refresh...`);
+    showToast(`🔄 Restoring ${savedQueries.length} active query views from session...`);
+
+    for (let i = 0; i < savedQueries.length; i++) {
+        const item = savedQueries[i];
+        try {
+            const response = await fetch(`${apiURL}/custom-query`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ dbName: item.dbName, query: item.sqlQuery })
+            });
+
+            const result = await response.json();
+            if (response.ok && result.results) {
+                const batch = result.results;
+                const dataItem = batch.find(r => r.type === 'data');
+                if (dataItem && dataItem.data) {
+                    currentSqlBatchResults = batch;
+                    const dataIndex = batch.indexOf(dataItem);
+                    // Load into workspace dropdown!
+                    openSqlResultInWorkspace(dataIndex);
+                }
+            }
+        } catch (e) {
+            console.warn("Could not restore session query:", item.title, e);
+        }
+    }
+}
+
+// Trigger recovery automatically after the DOM finishes loading:
+window.addEventListener('DOMContentLoaded', () => {
+    // Small delay to ensure default DB/tables load first
+    setTimeout(recoverSessionWorkspace, 600);
+});
 document.addEventListener("DOMContentLoaded", () => {
   const contextMenu = document.getElementById("custom-context-menu");
   // We attach to 'data-container' because it ALWAYS exists in the HTML!
