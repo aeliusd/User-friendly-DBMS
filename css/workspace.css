@@ -1,0 +1,251 @@
+/* --- Modern SaaS Layout & Base --- */
+body { 
+    display: flex; 
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; 
+    margin: 0; 
+    height: 100vh; 
+    background: #f1f5f9; 
+    color: #1e293b; 
+}
+
+/* Harmonized Sidebar Matching the New Theme */
+#sidebar { 
+    width: 260px; 
+    background: #0f172a; 
+    color: #f8fafc; 
+    padding: 20px; 
+    display: flex; 
+    flex-direction: column; 
+    gap: 15px; 
+    transition: margin-left 0.3s ease; 
+    position: relative;
+    box-shadow: 4px 0 12px rgba(0,0,0,0.08);
+}
+#sidebar.collapsed { margin-left: -300px; }
+#sidebar h3 { margin-top: 0; border-bottom: 1px solid #1e293b; padding-bottom: 12px; font-size: 15px; letter-spacing: 0.5px; color: #94a3b8; text-transform: uppercase; }
+
+.db-btn { 
+    background: #1e293b; 
+    color: #cbd5e1; 
+    border: none; 
+    padding: 10px 14px; 
+    text-align: left; 
+    cursor: pointer; 
+    border-radius: 6px; 
+    width: 100%; 
+    font-size: 13px; 
+    font-weight: 500; 
+    transition: all 0.15s ease; 
+}
+.db-btn:hover { background: #334155; color: white; }
+.db-btn.active { background: #0284c7; color: white; font-weight: bold; }
+
+#main-content { flex: 1; padding: 24px 32px; overflow-y: auto; background: #f8fafc; }
+.hidden { display: none; }
+
+/* --- Standardized Buttons --- */
+.btn { 
+    padding: 7px 14px; 
+    border-radius: 6px; 
+    border: none; 
+    cursor: pointer; 
+    font-weight: 500; 
+    font-size: 13px; 
+    display: inline-flex; 
+    align-items: center; 
+    justify-content: center; 
+    gap: 6px; 
+    transition: all 0.15s ease; 
+    box-shadow: 0 1px 2px rgba(0,0,0,0.04); 
+}
+.btn:hover { filter: brightness(1.05); transform: translateY(-1px); }
+.btn:active { transform: translateY(0); }
+
+.btn-primary { background-color: #0284c7; color: white; }
+.btn-secondary { background-color: #64748b; color: white; }
+.btn-danger { background-color: #ef4444; color: white; }
+.btn-success { background-color: #10b981; color: white; }
+
+/* --- Clean Outline Toolbar Buttons --- */
+.btn-outline-clean {
+    background: #ffffff; 
+    color: #475569; 
+    border: 1px solid #cbd5e1;
+    padding: 6px 14px; 
+    border-radius: 6px; 
+    font-size: 13px; 
+    font-weight: 500;
+    cursor: pointer; 
+    display: inline-flex; 
+    align-items: center; 
+    gap: 6px;
+    box-shadow: 0 1px 2px rgba(0,0,0,0.02); 
+    transition: all 0.15s ease;
+}
+.btn-outline-clean:hover { background: #f1f5f9; border-color: #94a3b8; color: #0f172a; }
+
+/* --- SaaS Card Containers --- */
+.toolbar-card {
+    background: #ffffff; 
+    border: 1px solid #e2e8f0; 
+    border-radius: 10px;
+    padding: 18px 22px; 
+    box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.02), 0 2px 4px -2px rgba(0, 0, 0, 0.02);
+    margin-bottom: 24px;
+}
+
+.toolbar { display: flex; flex-direction: column; gap: 16px; background: transparent; padding: 0; }
+.toolbar-row { display: flex; flex-wrap: wrap; gap: 16px; align-items: center; justify-content: space-between; }
+.toolbar-group { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+
+.form-control { 
+    padding: 7px 12px; 
+    border: 1px solid #cbd5e1; 
+    border-radius: 6px; 
+    font-size: 13px; 
+    background: #fff; 
+    color: #1e293b; 
+    outline: none; 
+    transition: border-color 0.15s; 
+}
+.form-control:focus { border-color: #0284c7; box-shadow: 0 0 0 3px rgba(2, 132, 199, 0.1); }
+
+/* --- Modernized Data Grid Styling --- */
+#data-container {
+    background: #ffffff; 
+    border: 1px solid #e2e8f0; 
+    border-radius: 10px;
+    box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.02); 
+    overflow: hidden;
+}
+
+#data-container table {
+    width: 100%; 
+    border-collapse: collapse; 
+    white-space: nowrap; 
+    background-color: white;
+}
+
+#data-container th {
+    background-color: #f8fafc; 
+    color: #1e293b; /* Fixed: Strong, dark legible column header text */
+    font-weight: 700; 
+    font-size: 12px;
+    text-transform: uppercase; 
+    letter-spacing: 0.5px; 
+    padding: 12px 16px;
+    border-bottom: 2px solid #e2e8f0; 
+    text-align: left; 
+    position: sticky; 
+    top: 0; 
+    z-index: 10;
+}
+
+/* Fixed: Make the (hide) text tiny, muted, and subtle so it doesn't overpower the header */
+#data-container th span, #data-container th a {
+    font-size: 10px; 
+    font-weight: normal; 
+    color: #94a3b8; 
+    opacity: 0.6; 
+    margin-left: 4px;
+    transition: opacity 0.15s;
+}
+#data-container th:hover span, #data-container th:hover a { opacity: 1; color: #0284c7; }
+
+#data-container td {
+    max-width: 280px; 
+    overflow: hidden; 
+    text-overflow: ellipsis;
+    padding: 12px 16px; 
+    border-bottom: 1px solid #f1f5f9; 
+    font-size: 13px; 
+    color: #334155;
+}
+/* --- Force Column Headers to be Dark and Legible --- */
+#data-container th, 
+#data-container th div, 
+#data-container th span:not(.hide-tag) {
+    color: #0f172a !important;
+    opacity: 1 !important;
+    font-weight: 700 !important;
+}
+
+/* Keep the (hide) text subtle and muted */
+#data-container th span, 
+#data-container th a {
+    color: #64748b !important;
+    opacity: 0.7 !important;
+    font-weight: normal !important;
+    font-size: 10px !important;
+}
+
+#data-container th:hover span, 
+#data-container th:hover a {
+    opacity: 1 !important;
+    color: #0284c7 !important;
+}
+
+#sidebar { 
+    width: 260px; 
+    background: #0f172a; 
+    color: #f8fafc; 
+    padding: 16px; 
+    display: flex; 
+    flex-direction: column; 
+    gap: 12px; 
+    transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1); 
+    position: relative;
+    box-shadow: 4px 0 16px rgba(0,0,0,0.06);
+    border-right: 1px solid #1e293b;
+    height: 100vh;
+    box-sizing: border-box;
+}
+
+/* Smooth collapsed state sliding completely off-screen */
+#sidebar.collapsed { 
+    margin-left: -260px; 
+    opacity: 0;
+    pointer-events: none;
+}
+
+/* Inside Collapse Icon Button */
+.sidebar-toggle-btn {
+    background: transparent;
+    border: none;
+    color: #94a3b8;
+    cursor: pointer;
+    padding: 6px;
+    border-radius: 6px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.15s ease;
+}
+.sidebar-toggle-btn:hover {
+    background: #1e293b;
+    color: #ffffff;
+}
+
+/* Polished Database Navigation Buttons inside Sidebar */
+.db-btn { 
+    background: transparent; 
+    color: #cbd5e1; 
+    border: none; 
+    padding: 10px 14px; 
+    text-align: left; 
+    cursor: pointer; 
+    border-radius: 8px; 
+    width: 100%; 
+    font-size: 13px; 
+    font-weight: 500; 
+    transition: all 0.15s ease; 
+}
+.db-btn:hover { background: #1e293b; color: white; }
+.db-btn.active { background: #0284c7; color: white; font-weight: 600; }
+
+#data-container table tbody tr:nth-child(even) { background-color: #fafbfc; }
+#data-container table tbody tr:hover { background-color: #f1f5ff; }
+#data-container table tbody td:hover { background-color: #e0f2fe; cursor: cell; color: #0369a1; }
+
+/* Schema Map Fixes */
+#schema-content svg { max-width: none !important; min-width: 1400px; height: auto !important; }

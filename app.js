@@ -31,13 +31,23 @@ async function selectDatabase(dbName, clickedButton) {
     
     document.querySelectorAll('.db-btn').forEach(btn => btn.classList.remove('active'));
     if (clickedButton) clickedButton.classList.add('active');
-    // Reset the control panel visibility so the table dropdown appears
-    document.getElementById('control-panel').style.display = 'block';
 
-    document.getElementById('current-db-title').innerText = `${dbName} Workspace`;
-    document.getElementById('dashboard-view').classList.add('hidden');
-    document.getElementById('data-view').classList.remove('hidden');
-    document.getElementById('deleteDbBtn').style.display = 'block';
+    // Safe UI toggling: only change style if the element exists
+    const controlPanel = document.getElementById('control-panel');
+    if (controlPanel) controlPanel.style.display = 'block';
+
+    const dbTitle = document.getElementById('current-db-title');
+    if (dbTitle) dbTitle.innerText = `${dbName} Workspace`;
+
+    const dashboardView = document.getElementById('dashboard-view');
+    if (dashboardView) dashboardView.classList.add('hidden');
+
+    const dataView = document.getElementById('data-view');
+    if (dataView) dataView.classList.remove('hidden');
+
+    const deleteBtn = document.getElementById('deleteDbBtn');
+    if (deleteBtn) deleteBtn.style.display = 'block';
+
     await loadTablesForWorkspace(dbName);
 }
 
@@ -227,10 +237,19 @@ async function loadTablesForWorkspace(dbName) {
         currentColumns = [];
 
         // 3. Resets the search controls
-        document.getElementById('search-box').value = '';
-        document.getElementById('exact-match-checkbox').checked = false;
-        document.getElementById('column-dropdown').innerHTML = '<option value="ALL">All Columns</option>';
-        
+        const searchBoxInput = document.getElementById('search-box');
+        if (searchBoxInput) {
+            searchBoxInput.value = '';
+        }
+        const exactMatchCheckbox = document.getElementById('exact-match-checkbox');
+        if (exactMatchCheckbox) {
+            exactMatchCheckbox.checked = false;
+        }
+        const columnDropdown = document.getElementById('column-dropdown');
+        if (columnDropdown) {
+            columnDropdown.innerHTML = '<option value="ALL">All Columns</option>';
+        }
+
         // Hide table-specific tools when loading a new workspace
         document.getElementById('table-action-buttons').style.display = 'none';
         document.getElementById('table-specific-tools').style.display = 'none';
@@ -2514,6 +2533,146 @@ async function executeAdvancedJoin() {
     }
 }
 
+// =================================================================
+// 1. UNIFIED EXPORT HANDLER
+// =================================================================
+function handleUnifiedExport() {
+    const action = document.getElementById('exportActionSelect').value;
+    if (action === 'view') {
+        // Calls your existing "Export Current View" function
+        if (typeof exportCurrentView === 'function') exportCurrentView();
+    } else {
+        // Calls your existing "Export Entire Table" function
+        if (typeof exportEntireTable === 'function') exportEntireTable();
+    }
+}
+
+// =================================================================
+// 2. UNIFIED TABLE SETTINGS MODAL
+// =================================================================
+function openTableSettingsModal() {
+    const activeTable = document.getElementById('tableSelect').value;
+    if (!activeTable) {
+        showToast("⚠️ Please select an active table first.");
+        return;
+    }
+
+    document.getElementById('settings-table-name-label').innerText = activeTable;
+    document.getElementById('newTableNameInput').value = activeTable;
+
+    // Build the column visibility checkboxes
+    const container = document.getElementById('settings-columns-checkboxes');
+    if (container && typeof visibleColumns !== 'undefined' && typeof currentColumns !== 'undefined') {
+        container.innerHTML = currentColumns.map(col => {
+            const isChecked = visibleColumns.includes(col);
+            return `
+                <label style="display:flex; align-items:center; gap:8px; font-size:13px; cursor:pointer;">
+                    <input type="checkbox" value="${col}" ${isChecked ? 'checked' : ''} onchange="toggleColumnFromSettings('${col}')" />
+                    <span>${col}</span>
+                </label>`;
+        }).join('');
+    }
+
+    document.getElementById('tableSettingsModal').style.display = 'flex';
+}
+
+function closeTableSettingsModal() {
+    document.getElementById('tableSettingsModal').style.display = 'none';
+    // Refresh table rendering if visibility changed
+    if (typeof renderTable === 'function') renderTable();
+}
+
+function toggleColumnFromSettings(columnName) {
+    if (typeof hideColumn === 'function' && typeof showColumn === 'function') {
+        if (visibleColumns.includes(columnName)) {
+            hideColumn(columnName);
+        } else {
+            showColumn(columnName);
+        }
+    }
+}
+
+function toggleAllColumnsVisibility(showAll) {
+    if (typeof currentColumns === 'undefined') return;
+    currentColumns.forEach(col => {
+        const chk = document.querySelector(`#settings-columns-checkboxes input[value="${col}"]`);
+        if (chk) chk.checked = showAll;
+    });
+    visibleColumns = showAll ? [...currentColumns] : [currentColumns[0]]; // Keep PK visible
+    if (typeof renderTable === 'function') renderTable();
+}
+
+function executeRenameFromModal() {
+    const newName = document.getElementById('newTableNameInput').value.trim();
+    if (!newName) return;
+    closeTableSettingsModal();
+    // Call your existing rename table function
+    if (typeof renameTable === 'function') renameTable(newName);
+}
+
+function executeDeleteTableFromModal() {
+    closeTableSettingsModal();
+    // Call your existing delete table function
+    if (typeof deleteTable === 'function') deleteTable();
+}
+
+// =================================================================
+// 3. UNIFIED SCHEMA & LINKS MODAL
+// =================================================================
+function openSchemaLinksModal() {
+    document.getElementById('schemaLinksModal').style.display = 'flex';
+    switchSchemaTab('map'); // Default to Schema Map
+}
+
+function closeSchemaLinksModal() {
+    document.getElementById('schemaLinksModal').style.display = 'none';
+}
+
+function switchSchemaTab(tabName) {
+    // Hide all panes
+    document.querySelectorAll('.schema-tab-pane').forEach(p => p.style.display = 'none');
+    document.querySelectorAll('.schema-tab-btn').forEach(b => {
+        b.style.borderBottom = 'none';
+        b.style.fontWeight = 'normal';
+        b.style.color = '#64748b';
+    });
+
+    // Activate selected tab
+    const pane = document.getElementById(`schema-tab-pane-${tabName}`);
+    const btn = document.getElementById(`schema-tab-btn-${tabName}`);
+    if (pane) pane.style.display = 'block';
+    if (btn) {
+        btn.style.borderBottom = '2px solid #007bff';
+        btn.style.fontWeight = 'bold';
+        btn.style.color = '#007bff';
+    }
+
+    // Trigger your existing renderers when opening the tab
+    if (tabName === 'map' && typeof renderSchemaMap === 'function') {
+        renderSchemaMap('unified-schema-map-container');
+    } else if (tabName === 'view' && typeof loadRelationshipsList === 'function') {
+        loadRelationshipsList('unified-relationships-list');
+    }
+}
+
+function toggleSidebar() {
+    const sidebar = document.getElementById('sidebar');
+    sidebar.classList.toggle('collapsed');
+    
+    const isCollapsed = sidebar.classList.contains('collapsed');
+    
+    // Toggle the open button on the Dashboard view
+    const openBtnDash = document.getElementById('sidebarOpenBtnDash');
+    if (openBtnDash) {
+        openBtnDash.style.display = isCollapsed ? 'inline-flex' : 'none';
+    }
+    
+    // Toggle the open button on the Workspace view
+    const openBtnWorkspace = document.getElementById('sidebarOpenBtn');
+    if (openBtnWorkspace) {
+        openBtnWorkspace.style.display = isCollapsed ? 'inline-flex' : 'none';
+    }
+}
 
 const SESSION_KEY = 'workspace_session_queries';
 
