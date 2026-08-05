@@ -7,7 +7,13 @@ let currentSortColumn = '';
 let sortAscending = true;
 // pagination variables
 let currentPage = 1;
-const rowsPerPage = 15;
+let rowsPerPage = 15;
+
+function changeRowsPerPage(newSize) {
+    rowsPerPage = parseInt(newSize, 10);
+    currentPage = 1; // Reset to first page
+    renderTable();
+}
 
 let currentDatabase = 'Northwind'; // Default database
 let undoStack = [];
@@ -24,6 +30,35 @@ function hideColumn(columnName) {
         hiddenColumns.push(columnName);
         renderTable();
     }
+}
+function showShortcutsModal() {
+    document.getElementById('shortcutsModal').style.display = 'flex';
+}
+
+function closeShortcutsModal() {
+    document.getElementById('shortcutsModal').style.display = 'none';
+}
+
+function renderEmptyWorkspaceState() {
+    const container = document.getElementById('data-container');
+    if (!container) return;
+    
+    container.innerHTML = `
+    <div style="display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 60px 20px; text-align: center; background: #f8fafc; border: 2px dashed #cbd5e1; border-radius: 12px; margin-top: 15px;">
+        <div style="font-size: 38px; margin-bottom: 12px;">📊</div>
+        <h3 style="margin: 0 0 6px 0; font-size: 18px; color: #1e293b;">No Table Selected</h3>
+        <p style="margin: 0 0 20px 0; font-size: 13px; color: #64748b; max-width: 380px;">
+            Select an existing table from the dropdown above, or create a new table to start working with your data.
+        </p>
+        <div style="display: flex; gap: 10px; flex-wrap: wrap; justify-content: center;">
+            <button onclick="promptCreateEmptyTable()" class="btn btn-success" style="font-weight: 500; font-size: 13px; padding: 8px 16px;">
+                ➕ Create Empty Table
+            </button>
+            <button onclick="document.getElementById('csvFile').click()" class="btn btn-secondary" style="font-weight: 500; font-size: 13px; padding: 8px 16px;">
+                📁 Import CSV
+            </button>
+        </div>
+    </div>`;
 }
 
 function showColumn(columnName) {
@@ -233,7 +268,7 @@ async function loadTablesForWorkspace(dbName) {
         // 1. Clear the visual data grid
         const container = document.getElementById('data-container');
         if (container) {
-            container.innerHTML = '<p style="color: gray;">Select a table from the dropdown above to view data.</p>';
+            renderEmptyWorkspaceState();
         }
 
         // 2. Wipes the global memory so it forgets the old table
@@ -623,10 +658,14 @@ function renderTable() {
                 cellBgStyle = 'background-color: #ffffff;'; // Alb curat pentru celulele A
             }
         if (!isPrimaryKey) {
-                html += `<td style="cursor: pointer; ${cellBgStyle}" ondblclick="makeCellEditable(this, '${ActiveTableName}', '${column}', '${pkColumnName}', '${row[pkColumnName]}', '${escapedRaw}')">${cellData}</td>`;
-            } else {
-                html += `<td style="${cellBgStyle}">${cellData}</td>`;
-            }
+            // Added class="editable-cell" and title="Double-click to edit" for instant discoverability!
+            html += `<td class="editable-cell" 
+                         title="Double-click to edit" 
+                         style="cursor: pointer; ${cellBgStyle}" 
+                         ondblclick="makeCellEditable(this, '${ActiveTableName}', '${column}', '${pkColumnName}', '${row[pkColumnName]}', '${escapedRaw}')">${cellData}</td>`;
+        } else {
+            html += `<td style="${cellBgStyle}" title="Primary Key (Locked)">${cellData}</td>`;
+        }
         });
 
         html += `<td style="text-align: center;">
@@ -637,17 +676,46 @@ function renderTable() {
     html += '</table></div>';
 
     // pagination control
-    let paginationHtml = ''; 
-    if (totalPages > 1) {
-        paginationHtml = `
-        <div style="margin-top: 15px; display: flex; align-items: center; gap: 15px; font-family: sans-serif;">
-            <button onclick="changePage(-1)" ${currentPage === 1 ? 'disabled' : ''} class="btn btn-secondary" style="${currentPage === 1 ? 'opacity: 0.5; cursor: not-allowed;' : ''}">Previous</button>
-            <span style="font-weight: bold; font-size: 14px;">Page ${currentPage} of ${totalPages}</span>
-            <button onclick="changePage(1)" ${currentPage === totalPages ? 'disabled' : ''} class="btn btn-secondary" style="${currentPage === totalPages ? 'opacity: 0.5; cursor: not-allowed;' : ''}">Next</button>
+    const displayTotalPages = Math.max(1, totalPages);
+
+    let paginationHtml = `
+    <div style="margin-top: 15px; display: flex; align-items: center; justify-content: space-between; font-family: sans-serif; flex-wrap: wrap; gap: 10px;">
+        <!-- Page Navigation Buttons -->
+        <div style="display: flex; align-items: center; gap: 15px;">
+            <button onclick="changePage(-1)" 
+                    ${currentPage <= 1 ? 'disabled' : ''} 
+                    class="btn btn-secondary" 
+                    style="${currentPage <= 1 ? 'opacity: 0.5; cursor: not-allowed;' : ''}">
+                Previous
+            </button>
+            
+            <span style="font-weight: bold; font-size: 14px;">
+                Page ${currentPage} of ${displayTotalPages}
+            </span>
+            
+            <button onclick="changePage(1)" 
+                    ${currentPage >= displayTotalPages ? 'disabled' : ''} 
+                    class="btn btn-secondary" 
+                    style="${currentPage >= displayTotalPages ? 'opacity: 0.5; cursor: not-allowed;' : ''}">
+                Next
+            </button>
         </div>
-        `;
-        html += paginationHtml;
-    }
+        
+        <!-- Rows Per Page Selector -->
+        <div style="display: flex; align-items: center; gap: 8px; font-size: 13px; color: #475569;">
+            <label for="rowsPerPageSelect" style="font-weight: 500;">Rows per page:</label>
+            <select id="rowsPerPageSelect" onchange="changeRowsPerPage(this.value)" class="form-control" style="width: 75px; padding: 4px 8px; font-size: 13px;">
+                <option value="10" ${rowsPerPage === 10 ? 'selected' : ''}>10</option>
+                <option value="15" ${rowsPerPage === 15 ? 'selected' : ''}>15</option>
+                <option value="25" ${rowsPerPage === 25 ? 'selected' : ''}>25</option>
+                <option value="50" ${rowsPerPage === 50 ? 'selected' : ''}>50</option>
+                <option value="100" ${rowsPerPage === 100 ? 'selected' : ''}>100</option>
+            </select>
+        </div>
+    </div>`;
+
+    html += paginationHtml;
+
     //hidden dropdown
     let hiddenDropdownHtml = '';
     if (hiddenColumns.length > 0) {
@@ -1683,8 +1751,7 @@ async function deleteCurrentTable() {
         if (response.ok) {
             const result = await response.json();
             showToast(result.message);
-            document.getElementById('data-container').innerHTML = '<p style="color: gray;">Select a table from the dropdown above to view data.</p>';
-            
+            renderEmptyWorkspaceState();
             const dropdown = document.getElementById('tableSelect');
             for (let i = 0; i < dropdown.options.length; i++) {
                 if (dropdown.options[i].value === ActiveTableName) {
@@ -1732,8 +1799,7 @@ async function deleteCurrentDatabase() {
             ActiveTableName = null;
             
             // 2. Wipe the table dropdown completely so ghost tables don't remain
-            document.getElementById('tableSelect').innerHTML = '<option value="">-- Select a Table --</option>';
-            
+            renderEmptyWorkspaceState();
             // 3. Reset the main viewing area using the correct ID
             document.getElementById('data-container').innerHTML = '<div style="padding: 20px; color: gray;">Database deleted. Please select another database from the sidebar.</div>';
             
