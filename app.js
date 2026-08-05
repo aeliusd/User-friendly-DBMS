@@ -256,7 +256,7 @@ async function loadTablesForWorkspace(dbName) {
         
         // Grab your existing HTML <select> dropdown element for tables
         const tableSelect = document.getElementById('tableSelect'); // Make sure this ID matches your HTML drop-down!
-        tableSelect.innerHTML = '<option value="">-- Select a Table --</option>';
+        tableSelect.innerHTML = '<option value="" disabled hidden selected>-- Select a Table --</option>';
 
         tables.forEach(table => {
             const option = document.createElement('option');
@@ -1761,6 +1761,7 @@ async function deleteCurrentTable() {
             }
             dropdown.value = ""; // Reset the dropdown to the default state
             ActiveTableName = null;
+            document.getElementById('tableSelect').value = '';
             
             // Hide table-specific tools now that the table is gone
             document.getElementById('table-action-buttons').style.display = 'none';
