@@ -13,6 +13,10 @@ let currentDatabase = 'Northwind'; // Default database
 let undoStack = [];
 let redoStack = [];
 
+let masterTableData = []; // Store an unfiltered copy of the active table or SQL query view
+let activeMultiFilters = []; // Stores active filter objects
+let currentTableSchemaCache = []; // Caches schema data types for columns
+
 let hiddenColumns = [];
 let currentTableFKs = [];
 function hideColumn(columnName) {
@@ -333,6 +337,21 @@ async function loadTableData(tableName, searchQuery = '', isExactMatch = false, 
         populateDropdown();
 
         globalTableData = rows; // Store the fetched data globally
+        masterTableData = [...rows]; // Keep an unfiltered copy for future reference
+
+        try {
+            const schemaResponse = await fetch(`${apiURL}/${tableName}/schema?dbName=${currentDatabase}`);
+            if (schemaResponse.ok) currentTableSchemaCache = await schemaResponse.json();
+        } catch (e) {
+            currentTableSchemaCache = [];
+        }
+
+        // Reset active filters when loading a brand new table
+        if (ActiveTableName !== tableName) {
+            activeMultiFilters = [];
+            updateFilterBadgeUI();
+        }
+
         currentPage = 1; // Reset to the first page whenever new data is loaded
         //silently fetch relationships
         try {
@@ -383,15 +402,30 @@ function executeSearch() {
     const text = document.getElementById('search-box').value;
     const isExact = document.getElementById('exact-match-checkbox').checked;
     const column = document.getElementById('column-dropdown').value; // Grab dropdown value
-    loadTableData(ActiveTableName, text, isExact, column);
+    if (customSqlViews[ActiveTableName]) {
+        loadCustomSqlView(ActiveTableName, text, isExact, column);
+    } else {
+        loadTableData(ActiveTableName, text, isExact, column);
+    }
 }
 
 // Clear search input, uncheck the checkbox, reset dropdown, and reload table data
+// Now also clears filters
 function clearSearch() {
     document.getElementById('search-box').value = '';
     document.getElementById('exact-match-checkbox').checked = false; // Uncheck the box
     document.getElementById('column-dropdown').value = 'ALL';
-    loadTableData(ActiveTableName, '', false, 'ALL');
+    //clear filters
+    activeMultiFilters = [];
+    if (typeof updateFilterBadgeUI === 'function') {
+        updateFilterBadgeUI();
+    }
+    // clear tables or queries
+    if (customSqlViews[ActiveTableName]) {
+        loadCustomSqlView(ActiveTableName, '', false, 'ALL');
+    } else {
+        loadTableData(ActiveTableName, '', false, 'ALL');
+    }
 }
 
 // Redraw the table based on the current globalTableData and currentColumns
@@ -1776,19 +1810,47 @@ function openSqlResultInWorkspace(idx, overrideTitle = null, showFeedback = true
 }
 
 // Helper: Loads a custom SQL view from memory into the normal table grid
-function loadCustomSqlView(viewName) {
-    const data = customSqlViews[viewName];
-    if (!data || data.length === 0) return;
+function loadCustomSqlView(viewName, searchQuery = '', isExactMatch = false, searchColumn = 'ALL') {
+    const rawData = customSqlViews[viewName];
+    if (!rawData || rawData.length === 0) return;
 
     ActiveTableName = viewName;
-    globalTableData = [...data];
-    currentColumns = Object.keys(data[0]);
+    masterTableData = [...rawData]; // Keep a master copy for filtering
+    currentTableSchemaCache = [];
+    // 1. Apply Client-Side Filtering if a search term is present
+    let filteredData = [...rawData];
+    if (searchQuery.trim() !== '') {
+        const query = searchQuery.trim().toLowerCase();
+        filteredData = rawData.filter(row => {
+            if (searchColumn !== 'ALL' && row[searchColumn] !== undefined && row[searchColumn] !== null) {
+                const cellVal = String(row[searchColumn]).toLowerCase();
+                return isExactMatch ? cellVal === query : cellVal.includes(query);
+            } else {
+                // Search across all columns in the row
+                return Object.values(row).some(val => {
+                    if (val === null || val === undefined) return false;
+                    const cellVal = String(val).toLowerCase();
+                    return isExactMatch ? cellVal === query : cellVal.includes(query);
+                });
+            }
+        });
+    }
+
+    // 2. Assign filtered data to globalTableData so pagination & sorting work normally
+    globalTableData = filteredData;
+    
+    // Always use the original headers from rawData so columns don't vanish on an empty search result
+    currentColumns = Object.keys(rawData[0]);
     currentPage = 1;
     hiddenColumns = [];
     currentSortColumn = '';
 
-    document.getElementById('search-box').value = '';
-    document.getElementById('exact-match-checkbox').checked = false;
+    // Only wipe the search boxes if we are loading the view fresh (not actively searching)
+    if (searchQuery === '') {
+        document.getElementById('search-box').value = '';
+        document.getElementById('exact-match-checkbox').checked = false;
+    }
+    
     populateDropdown();
 
     document.getElementById('control-panel').style.display = 'block';
@@ -2887,6 +2949,261 @@ window.addEventListener("DOMContentLoaded", () => {
 function syncBrowserHistory() {
     currentHistoryIndex++;
     history.pushState({ index: currentHistoryIndex }, document.title, window.location.href);
+}
+
+// MULTI-COLUMN FILTER ENGINE (Supports Normal Tables & SQL Queries)
+// =================================================================
+
+function showMultiFilterModal() {
+    renderFilterRowsUI();
+    document.getElementById('multiFilterModal').style.display = 'flex';
+}
+
+function closeMultiFilterModal() {
+    document.getElementById('multiFilterModal').style.display = 'none';
+}
+
+// Detect column data type using Schema Cache OR inspecting live row values (for SQL Views)
+function getColumnDataType(colName) {
+    // 1. Try checking backend SQL schema first
+    const schemaCol = currentTableSchemaCache.find(c => c.ColumnName === colName);
+    if (schemaCol && schemaCol.DataType) {
+        const dt = schemaCol.DataType.toLowerCase();
+        if (['int', 'bigint', 'smallint', 'tinyint', 'decimal', 'numeric', 'money', 'float', 'real'].includes(dt)) {
+            return 'number';
+        }
+        if (['date', 'datetime', 'datetime2', 'timestamp'].includes(dt)) {
+            return 'date';
+        }
+        return 'text';
+    }
+
+    // 2. Fallback for SQL Query views: inspect first non-null value in masterTableData
+    for (let row of masterTableData) {
+        let val = row[colName];
+        if (val !== null && val !== undefined && val !== '') {
+            let str = String(val).trim();
+            // Check if valid number
+            if (!isNaN(Number(str))) return 'number';
+            // Check if date format (YYYY-MM-DD or contains date separators)
+            if (/^\d{4}[-/.]\d{2}[-/.]\d{2}/.test(str)) return 'date';
+            return 'text';
+        }
+    }
+    return 'text'; // Default
+}
+
+// Add a new blank filter row
+function addFilterRow(defaultCol = null) {
+    if (!currentColumns || currentColumns.length === 0) return;
+    const col = defaultCol || currentColumns[0];
+    const type = getColumnDataType(col);
+
+    activeMultiFilters.push({
+        id: 'filter_' + Date.now() + '_' + Math.random().toString(36).substr(2, 4),
+        column: col,
+        type: type,
+        operator: type === 'text' ? 'starts_with' : 'smaller',
+        val1: '',
+        val2: '',
+        selectedForClear: false
+    });
+
+    renderFilterRowsUI();
+}
+
+// Render all filter rows inside the modal
+function renderFilterRowsUI() {
+    const container = document.getElementById('filter-rows-container');
+    const clearTools = document.getElementById('filter-clear-tools');
+    
+    if (activeMultiFilters.length === 0) {
+        container.innerHTML = `<p style="text-align:center; color:#64748b; padding:20px; font-style:italic;">No active filters. Click "+ Add Filter on a Column" below to start.</p>`;
+        clearTools.style.display = 'none';
+        updateFilterBadgeUI();
+        return;
+    }
+
+    clearTools.style.display = 'flex';
+    updateSelectedClearCountUI();
+
+    let html = '';
+    activeMultiFilters.forEach((filter, idx) => {
+        // Build Column Options
+        const colOptions = currentColumns.map(c => 
+            `<option value="${c}" ${c === filter.column ? 'selected' : ''}>${c}</option>`
+        ).join('');
+
+        // Build Operator Options based on Data Type
+        let opOptions = '';
+        if (filter.type === 'number' || filter.type === 'date') {
+            opOptions = `
+                <option value="smaller" ${filter.operator === 'smaller' ? 'selected' : ''}>Smaller (<)</option>
+                <option value="bigger" ${filter.operator === 'bigger' ? 'selected' : ''}>Bigger (>)</option>
+                <option value="like" ${filter.operator === 'like' ? 'selected' : ''}>Like / Equals (=)</option>
+                <option value="interval" ${filter.operator === 'interval' ? 'selected' : ''}>Interval (Between)</option>
+            `;
+        } else {
+            opOptions = `
+                <option value="starts_with" ${filter.operator === 'starts_with' ? 'selected' : ''}>Starts With</option>
+                <option value="ends_with" ${filter.operator === 'ends_with' ? 'selected' : ''}>Ends With</option>
+                <option value="contains" ${filter.operator === 'contains' ? 'selected' : ''}>Contains</option>
+            `;
+        }
+
+        // Build Input Fields (Dual inputs appear when operator === 'interval')
+        const inputType = filter.type === 'number' ? 'number' : (filter.type === 'date' ? 'date' : 'text');
+        const isInterval = filter.operator === 'interval';
+
+        html += `
+        <div style="display:flex; align-items:center; gap:8px; background:#f8fafc; border:1px solid #e2e8f0; padding:10px; border-radius:6px;">
+            <!-- Checkbox for selective clearing -->
+            <input type="checkbox" onchange="toggleSelectFilterForClear(${idx}, this.checked)" ${filter.selectedForClear ? 'checked' : ''} title="Select to clear" style="cursor:pointer;" />
+            
+            <!-- Column Selector -->
+            <select onchange="handleFilterColumnChange(${idx}, this.value)" class="form-control" style="width:160px; font-weight:bold;">
+                ${colOptions}
+            </select>
+
+            <!-- Operator Selector -->
+            <select onchange="handleFilterOperatorChange(${idx}, this.value)" class="form-control" style="width:140px; color:#4f46e5; font-weight:bold;">
+                ${opOptions}
+            </select>
+
+            <!-- Input Value 1 -->
+            <input type="${inputType}" value="${filter.val1}" oninput="activeMultiFilters[${idx}].val1 = this.value" placeholder="Value..." class="form-control" style="flex:1;" />
+
+            <!-- Input Value 2 (ONLY visible for Interval / Between) -->
+            <span id="label-and-${filter.id}" style="display:${isInterval ? 'inline' : 'none'}; font-size:12px; font-weight:bold; color:#64748b;">AND</span>
+            <input type="${inputType}" value="${filter.val2}" oninput="activeMultiFilters[${idx}].val2 = this.value" placeholder="End Value..." id="val2-${filter.id}" class="form-control" style="flex:1; display:${isInterval ? 'block' : 'none'};" />
+
+            <!-- Single Row Remove Button -->
+            <button onclick="removeFilterRow(${idx})" style="background:none; border:none; color:#dc3545; cursor:pointer; font-size:16px; font-weight:bold; padding:0 6px;" title="Remove filter">✖</button>
+        </div>`;
+    });
+
+    container.innerHTML = html;
+}
+
+// Handlers for dropdown changes inside the modal
+function handleFilterColumnChange(idx, newCol) {
+    const type = getColumnDataType(newCol);
+    activeMultiFilters[idx].column = newCol;
+    activeMultiFilters[idx].type = type;
+    activeMultiFilters[idx].operator = type === 'text' ? 'starts_with' : 'smaller';
+    activeMultiFilters[idx].val1 = '';
+    activeMultiFilters[idx].val2 = '';
+    renderFilterRowsUI();
+}
+
+function handleFilterOperatorChange(idx, newOp) {
+    activeMultiFilters[idx].operator = newOp;
+    renderFilterRowsUI();
+}
+
+function toggleSelectFilterForClear(idx, isChecked) {
+    activeMultiFilters[idx].selectedForClear = isChecked;
+    updateSelectedClearCountUI();
+}
+
+function updateSelectedClearCountUI() {
+    const count = activeMultiFilters.filter(f => f.selectedForClear).length;
+    const countEl = document.getElementById('selected-filter-count');
+    if (countEl) countEl.innerText = count;
+}
+
+function removeFilterRow(idx) {
+    activeMultiFilters.splice(idx, 1);
+    renderFilterRowsUI();
+    applyMultiColumnFilters();
+}
+
+// Clear ONLY checkboxes that were selected
+function clearSelectedFilters() {
+    activeMultiFilters = activeMultiFilters.filter(f => !f.selectedForClear);
+    renderFilterRowsUI();
+    applyMultiColumnFilters();
+}
+
+// Clear everything
+function clearAllFilters() {
+    activeMultiFilters = [];
+    renderFilterRowsUI();
+    applyMultiColumnFilters();
+}
+
+function updateFilterBadgeUI() {
+    const badge = document.getElementById('active-filters-badge');
+    if (!badge) return;
+    if (activeMultiFilters.length > 0) {
+        badge.style.display = 'inline-flex';
+        badge.innerText = ` ${activeMultiFilters.length} Active Filter${activeMultiFilters.length > 1 ? 's' : ''}`;
+    } else {
+        badge.style.display = 'none';
+    }
+}
+
+// APPLY ALL ACTIVE FILTERS AGAINST MASTER TABLE DATA
+function applyMultiColumnFilters() {
+    updateFilterBadgeUI();
+
+    // If no filters are active, restore full table from master cache
+    if (activeMultiFilters.length === 0) {
+        globalTableData = [...masterTableData];
+        currentPage = 1;
+        renderTable();
+        return;
+    }
+
+    // Filter masterTableData through every active condition
+    globalTableData = masterTableData.filter(row => {
+        return activeMultiFilters.every(filter => {
+            if (filter.val1 === '' && filter.operator !== 'interval') return true; // Ignore empty filters
+
+            let cellVal = row[filter.column];
+            if (cellVal === null || cellVal === undefined) return false;
+
+            // --- TEXT FILTERS ---
+            if (filter.type === 'text') {
+                const str = String(cellVal).toLowerCase();
+                const target = String(filter.val1).toLowerCase();
+                if (filter.operator === 'starts_with') return str.startsWith(target);
+                if (filter.operator === 'ends_with') return str.endsWith(target);
+                if (filter.operator === 'contains') return str.includes(target);
+            }
+
+            // --- NUMBER / DATE FILTERS ---
+            if (filter.type === 'number' || filter.type === 'date') {
+                let numCell, num1, num2;
+                if (filter.type === 'date') {
+                    numCell = new Date(cellVal).getTime();
+                    num1 = new Date(filter.val1).getTime();
+                    num2 = new Date(filter.val2).getTime();
+                } else {
+                    numCell = Number(cellVal);
+                    num1 = Number(filter.val1);
+                    num2 = Number(filter.val2);
+                }
+
+                if (isNaN(numCell) || isNaN(num1)) return false;
+
+                if (filter.operator === 'smaller') return numCell < num1;
+                if (filter.operator === 'bigger') return numCell > num1;
+                if (filter.operator === 'like') return String(cellVal).toLowerCase().includes(String(filter.val1).toLowerCase());
+                if (filter.operator === 'interval') {
+                    if (isNaN(num2)) return false;
+                    const min = Math.min(num1, num2);
+                    const max = Math.max(num1, num2);
+                    return numCell >= min && numCell <= max;
+                }
+            }
+            return true;
+        });
+    });
+
+    currentPage = 1; // Reset pagination to Page 1
+    renderTable();
+    showToast(`Filtered to ${globalTableData.length} matching records`);
 }
 
 // 3. Listen for clicks on the browser's top-left Back (<-) and Forward (->) arrows
