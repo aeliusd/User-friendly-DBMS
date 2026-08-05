@@ -127,15 +127,39 @@
                         <!-- Bottom Row: Search & Clean Export Dropdown -->
                         <div class="toolbar-row">
                             <div class="toolbar-group">
-                                <input type="text" id="search-box" placeholder="Search data..." class="form-control" style="width: 150px;">
-                                <select id="column-dropdown" class="form-control">
-                                    <option value="ALL">All Columns</option>
-                                </select>
-                                <label style="display: flex; align-items: center; gap: 5px; font-size: 13px; cursor: pointer; user-select: none;">
-                                    <input type="checkbox" id="exact-match-checkbox"> Exact Match
-                                </label>
-                                <button onclick="executeSearch()" class="btn btn-primary" style="margin-left: 5px;">🔍 Search</button>
-                                <button onclick="clearSearch()" class="btn btn-secondary">Clear</button>
+                                <div style="display: flex; align-items: center; gap: 8px;">
+                                    <!-- Compact Column Dropdown -->
+                                    <select id="column-dropdown" class="form-control" style="width: 125px; font-size: 13px;">
+                                        <option value="ALL">All Columns</option>
+                                    </select>
+
+                                    <!-- Search Input with Enter-to-Search + Embedded Clear Icon -->
+                                    <div style="position: relative; display: flex; align-items: center;">
+                                        <input type="text" 
+                                            id="search-box" 
+                                            placeholder="Search..." 
+                                            class="form-control" 
+                                            style="width: 150px; padding-right: 28px; font-size: 13px;"
+                                            oninput="handleSearchInput(this.value)"
+                                            onblur="handleSearchBlur()"
+                                            onkeydown="handleSearchKeyDown(event)" />
+                                            
+                                        <!-- Subtle embedded 'X' inside the input box -->
+                                        <button onclick="clearSearch()" 
+                                                title="Clear search" 
+                                                style="position: absolute; right: 8px; background: none; border: none; color: #94a3b8; cursor: pointer; font-size: 13px; padding: 0;"
+                                                onmouseover="this.style.color='#475569'" 
+                                                onmouseout="this.style.color='#94a3b8'">
+                                            ✖
+                                        </button>
+                                    </div>
+
+                                    <!-- 3. Clean Exact Match Pill -->
+                                    <label style="display: flex; align-items: center; gap: 5px; font-size: 13px; color: #475569; cursor: pointer; user-select: none; white-space: nowrap;">
+                                        <input type="checkbox" id="exact-match-checkbox"> Exact
+                                    </label>
+                                </div>
+
                                 <!-- filter buttons-->
                                 <button onclick="showMultiFilterModal()" class="btn-outline-clean" style="margin-left: 5px; font-size: 13px; font-weight: 500;">
                                     Filter Data

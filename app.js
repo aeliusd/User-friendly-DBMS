@@ -427,6 +427,46 @@ function clearSearch() {
         loadTableData(ActiveTableName, '', false, 'ALL');
     }
 }
+// search helper functions
+// Debounce timer for search input
+let searchDebounceTimer = null;
+
+function handleSearchInput(value) {
+    // 1. Clear any pending 2.5s timer whenever the user types a new character
+    clearTimeout(searchDebounceTimer);
+
+    // 2. If they backspace until the box is empty, clear the table instantly
+    if (value.trim() === '') {
+        clearSearch();
+        return;
+    }
+
+    // 3. Set a 2.5-second inactivity timer to auto-execute the search
+    searchDebounceTimer = setTimeout(() => {
+        executeSearch();
+    }, 2500);
+}
+
+function handleSearchBlur() {
+    // 1. Cancel the timer so it doesn't fire a duplicate search after leaving the box
+    clearTimeout(searchDebounceTimer);
+
+    // 2. Execute search if there is text, otherwise ensure the view is cleared
+    const text = document.getElementById('search-box').value.trim();
+    if (text !== '') {
+        executeSearch();
+    } else {
+        clearSearch();
+    }
+}
+
+function handleSearchKeyDown(event) {
+    if (event.key === 'Enter') {
+        // 1. Cancel the 2.5s timer so pressing Enter doesn't trigger a duplicate search later
+        clearTimeout(searchDebounceTimer);
+        executeSearch();
+    }
+}
 
 // Redraw the table based on the current globalTableData and currentColumns
 function renderTable() {
