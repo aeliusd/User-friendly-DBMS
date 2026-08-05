@@ -2556,13 +2556,8 @@ async function executeAdvancedJoin() {
 // =================================================================
 function handleUnifiedExport() {
     const action = document.getElementById('exportActionSelect').value;
-    if (action === 'view') {
-        // Calls your existing "Export Current View" function
-        if (typeof exportCurrentView === 'function') exportCurrentView();
-    } else {
-        // Calls your existing "Export Entire Table" function
-        if (typeof exportEntireTable === 'function') exportEntireTable();
-    }
+    // Directly pass 'filtered' or 'full' to your real export function:
+    exportToCSV(action);
 }
 
 // =================================================================
